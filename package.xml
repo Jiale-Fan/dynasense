@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>dynasense</name>
+  <version>0.0.1</version>
+  <description>Custom Gazebo sensor plugins for Dynasense.</description>
+
+  <maintainer email="user@example.com">Dynasense</maintainer>
+  <license>BSD</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <build_depend>gazebo_ros</build_depend>
+  <build_depend>roscpp</build_depend>
+  <build_depend>sensor_msgs</build_depend>
+
+  <exec_depend>gazebo_ros</exec_depend>
+  <exec_depend>roscpp</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+
+  <export>
+    <gazebo_ros plugin_path="${prefix}/lib"/>
+  </export>
+</package>
