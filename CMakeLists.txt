@@ -3,6 +3,7 @@ project(dynasense)
 
 find_package(catkin REQUIRED COMPONENTS
   roscpp
+  rospy
   sensor_msgs
   gazebo_ros
 )
@@ -10,7 +11,7 @@ find_package(catkin REQUIRED COMPONENTS
 find_package(gazebo REQUIRED)
 
 catkin_package(
-  CATKIN_DEPENDS roscpp sensor_msgs gazebo_ros
+  CATKIN_DEPENDS roscpp rospy sensor_msgs gazebo_ros
 )
 
 include_directories(
@@ -21,13 +22,20 @@ include_directories(
 
 link_directories(${GAZEBO_LIBRARY_DIRS})
 
-add_library(dynasense_foot_tof_ray_plugin src/foot_tof_ray_plugin.cpp)
+add_library(dynasense_foot_tof_ray_plugin foot_tof/src/foot_tof_ray_plugin.cpp)
 target_link_libraries(dynasense_foot_tof_ray_plugin ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES})
 add_dependencies(dynasense_foot_tof_ray_plugin ${catkin_EXPORTED_TARGETS})
 
-add_library(dynasense_foot_tof_pc_plugin src/foot_tof_ray_pointcloud_plugin.cpp)
+add_library(dynasense_foot_tof_pc_plugin foot_tof/src/foot_tof_ray_pointcloud_plugin.cpp)
 target_link_libraries(dynasense_foot_tof_pc_plugin ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES})
 add_dependencies(dynasense_foot_tof_pc_plugin ${catkin_EXPORTED_TARGETS})
+
+catkin_install_python(
+  PROGRAMS
+    foot_tof/bin/tof_preprocessor.py
+  DESTINATION
+    ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
 
 install(TARGETS dynasense_foot_tof_ray_plugin
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}

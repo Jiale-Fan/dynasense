@@ -1,0 +1,15 @@
+<launch>
+  <arg name="cfg" default="rsl.yaml"/>
+  <arg name="is_simulation" default="true"/>
+
+  <node
+    pkg="anymal_d_rsl"
+    type="sim.py"
+    name="anymal_d_rsl_sim"
+    output="screen"
+    args="--cfg $(arg cfg)"/>
+
+  <include file="$(find rl_controller)/launch/deploy.launch">
+    <arg name="is_simulation" value="$(arg is_simulation)"/>
+  </include>
+</launch>
