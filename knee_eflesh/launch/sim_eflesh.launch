@@ -1,0 +1,36 @@
+<launch>
+  <arg name="cfg" default="rsl.yaml"/>
+  <arg name="is_simulation" default="true"/>
+
+  <node
+    pkg="anymal_d_rsl"
+    type="sim.py"
+    name="anymal_d_rsl_sim"
+    output="screen"
+    args="--cfg $(arg cfg)"/>
+
+  <!-- <node
+    pkg="dynasense"
+    type="tof_preprocessor.py"
+    name="tof_preprocessor"
+    output="screen"
+    if="$(eval arg('is_simulation'))" /> -->
+
+  <!-- <node
+    pkg="dynasense"
+    type="foot_tof_visualizer_node"
+    name="foot_tof_visualizer"
+    output="screen">
+
+    <param name="frame_id"    value="odom" />
+    <param name="cell_size"   value="0.01" />
+    <param name="grid_height" value="0.02" />
+    <param name="line_width"  value="0.01" />
+    <param name="range_scale" value="0.001" />
+    <param name="max_range"   value="1.0" />
+    <param name="snapshot_topic" value="/foot_tof/snapshot_gazebo_source" />
+    <param name="display_type" value="l5_4x4" />
+
+  </node> -->
+
+</launch>
