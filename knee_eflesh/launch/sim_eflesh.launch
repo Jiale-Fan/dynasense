@@ -33,4 +33,11 @@
 
   </node> -->
 
+  <node
+    pkg="dynasense"
+    type="knee_contact_force_visualizer.py"
+    name="knee_contact_force_visualizer"
+    output="screen"
+    if="$(eval arg('is_simulation'))" />
+
 </launch>

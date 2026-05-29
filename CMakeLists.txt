@@ -2,16 +2,19 @@ cmake_minimum_required(VERSION 3.0.2)
 project(dynasense)
 
 find_package(catkin REQUIRED COMPONENTS
+  gazebo_msgs
+  geometry_msgs
   roscpp
   rospy
   sensor_msgs
+  visualization_msgs
   gazebo_ros
 )
 
 find_package(gazebo REQUIRED)
 
 catkin_package(
-  CATKIN_DEPENDS roscpp rospy sensor_msgs gazebo_ros
+  CATKIN_DEPENDS gazebo_msgs geometry_msgs roscpp rospy sensor_msgs visualization_msgs gazebo_ros
 )
 
 include_directories(
@@ -33,6 +36,7 @@ add_dependencies(dynasense_foot_tof_pc_plugin ${catkin_EXPORTED_TARGETS})
 catkin_install_python(
   PROGRAMS
     foot_tof/bin/tof_preprocessor.py
+    knee_eflesh/bin/knee_contact_force_visualizer.py
   DESTINATION
     ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
