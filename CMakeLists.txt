@@ -4,17 +4,30 @@ project(dynasense)
 find_package(catkin REQUIRED COMPONENTS
   gazebo_msgs
   geometry_msgs
+  message_generation
   roscpp
   rospy
   sensor_msgs
+  std_msgs
+  tf
   visualization_msgs
   gazebo_ros
 )
 
 find_package(gazebo REQUIRED)
 
+add_message_files(
+  FILES
+    KneeVisMsg.msg
+)
+
+generate_messages(
+  DEPENDENCIES
+    std_msgs
+)
+
 catkin_package(
-  CATKIN_DEPENDS gazebo_msgs geometry_msgs roscpp rospy sensor_msgs visualization_msgs gazebo_ros
+  CATKIN_DEPENDS gazebo_msgs geometry_msgs message_runtime roscpp rospy sensor_msgs std_msgs tf visualization_msgs gazebo_ros
 )
 
 include_directories(
@@ -36,6 +49,7 @@ add_dependencies(dynasense_foot_tof_pc_plugin ${catkin_EXPORTED_TARGETS})
 catkin_install_python(
   PROGRAMS
     foot_tof/bin/tof_preprocessor.py
+    knee_eflesh/bin/knee_contact_vis_publisher.py
     knee_eflesh/bin/knee_contact_force_visualizer.py
   DESTINATION
     ${CATKIN_PACKAGE_BIN_DESTINATION}
