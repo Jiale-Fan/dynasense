@@ -11,7 +11,7 @@ from dynasense.msg import KneeVisMsg
 class KneeContactVisPublisher:
     """Convert Gazebo knee contact topics to compact visualization messages."""
 
-    LEGS = ("LF", "RF", "LH", "RH")
+    LEGS = ("LF", "LH", "RF", "RH")
     EPS = 1e-9
 
     def __init__(self):

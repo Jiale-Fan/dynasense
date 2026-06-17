@@ -13,7 +13,7 @@ from dynasense.msg import KneeVisMsg
 class KneeContactForceVisualizer:
     """Visualize knee contact as arrow (force) or blue sphere (no contact)."""
 
-    LEGS = ("LF", "RF", "LH", "RH")
+    LEGS = ("LF", "LH", "RF", "RH")
 
     LEN_COEFF = 0.001  # [m/N]
     MIN_ARROW_LEN = 0.05
