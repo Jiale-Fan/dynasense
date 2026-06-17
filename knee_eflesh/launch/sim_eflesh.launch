@@ -35,10 +35,12 @@
 
   <node
     pkg="dynasense"
-    type="knee_contact_vis_publisher.py"
-    name="knee_contact_vis_publisher"
+    type="udp_sensor_node.py"
+    name="dynasense_udp_receiver"
     output="screen"
-    if="$(eval arg('is_simulation'))" />
+    if="$(eval arg('is_simulation'))">
+    <rosparam command="load" file="$(find dynasense)/knee_eflesh/config/udp_sensor_params.yaml" />
+  </node>
 
   <node
     pkg="dynasense"
