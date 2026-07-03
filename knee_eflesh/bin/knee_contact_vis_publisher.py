@@ -16,7 +16,7 @@ class KneeContactVisPublisher:
 
     def __init__(self):
         self.contact_topic_format = rospy.get_param("~contact_topic_format", "/contacts/{leg}/knee_cylinder")
-        self.output_topic = rospy.get_param("~output_topic", "/knee_eflesh/knee_vis")
+        self.output_topic = rospy.get_param("~output_topic", "/dynasense/knee_vis")
 
         self.pub = rospy.Publisher(self.output_topic, KneeVisMsg, queue_size=20)
 

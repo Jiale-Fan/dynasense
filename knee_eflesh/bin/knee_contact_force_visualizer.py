@@ -24,7 +24,7 @@ class KneeContactForceVisualizer:
     SPHERE_DIAM = 0.03
 
     def __init__(self):
-        self.input_topic = rospy.get_param("~input_topic", "/knee_eflesh/knee_vis")
+        self.input_topic = rospy.get_param("~input_topic", "/dynasense/knee_vis")
         self.output_topic = rospy.get_param("~marker_topic", "/knee_eflesh/knee_contact_force_markers")
         self.target_frame = rospy.get_param("~target_frame", "odom")
         self.marker_lifetime = rospy.Duration(rospy.get_param("~marker_lifetime_sec", 0.2))
