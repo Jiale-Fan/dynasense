@@ -16,7 +16,7 @@
     name="knee_contact_force_visualizer"
     output="screen"
     >
-    <param name="input_topic" value="/knee_eflesh/knee_vis" />
+    <param name="input_topic" value="/dynasense/knee_vis" />
     <param name="target_frame" value="odom" />
   </node>
 

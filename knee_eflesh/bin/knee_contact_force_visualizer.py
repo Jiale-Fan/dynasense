@@ -15,7 +15,7 @@ class KneeContactForceVisualizer:
 
     LEGS = ("LF", "LH", "RF", "RH")
 
-    LEN_COEFF = 0.001  # [m/N]
+    LEN_COEFF = 1.0/40000.0  # [m/unknown_unit]
     MIN_ARROW_LEN = 0.05
     MAX_ARROW_LEN = 0.3
     ARROW_SHAFT_DIAM = 0.05
