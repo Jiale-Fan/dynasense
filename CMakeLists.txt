@@ -49,15 +49,8 @@ add_dependencies(dynasense_foot_tof_pc_plugin ${catkin_EXPORTED_TARGETS})
 catkin_install_python(
   PROGRAMS
     foot_tof/bin/tof_preprocessor.py
-    knee_eflesh/bin/knee_contact_vis_publisher.py
-    knee_eflesh/bin/knee_contact_force_visualizer.py
-    knee_eflesh/bin/udp_sensor_node.py
   DESTINATION
     ${CATKIN_PACKAGE_BIN_DESTINATION}
-)
-
-install(DIRECTORY knee_eflesh/config
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/knee_eflesh
 )
 
 install(TARGETS dynasense_foot_tof_ray_plugin
