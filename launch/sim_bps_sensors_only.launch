@@ -1,0 +1,81 @@
+<?xml version="1.0"?>
+<!--
+  ContactBPS SENSING stack, WITHOUT the learned controller.
+
+  Same as sim_contact_bps.launch except that rl_controller::RlController is
+  never registered with motion_control_manager: no .onnx is loaded and no
+  policy writes joint targets. Everything the BPS sensor needs still comes up,
+  so this is the launch file for bringing up and debugging the sensor and its
+  visualization on their own.
+
+  What starts:
+    - gzserver + the ANYmal spawn with all ContactBPS sensors: the 8 THIGH/SHANK
+      contact sensors, 6 simulated depth cameras @50 Hz, the lidar @50 Hz, and
+      the ground-clearance ray plugin @50 Hz
+    - motion_control_manager with the STOCK ANYbotics/RSL controllers, so the
+      robot stands and joystick motion_1 (walk_learning_perceptive) walks it
+      around while you watch the BPS map
+    - the rqt/RViz GUI, from `rsl_base: enabled`, already carrying the
+      `Contact BPS Map` and `Ground Clearance Hits` displays
+    - dynasense_bps_node, publishing /dynasense/bps_state and
+      /dynasense/bps_markers
+
+  What does NOT start:
+    - rl_controller::RlController (the whole point)
+    - there is still no node for the ground-clearance rays; they are a Gazebo
+      model plugin declared in the robot description
+
+  The two voxel-activation paths (enable_contact_voxels, enable_ray_voxels) are
+  governed by bps.yaml, not by an arg here, so that this launch file cannot
+  silently disagree with the config the policy run uses.
+
+  Usage:
+    roslaunch dynasense sim_bps_sensors_only.launch
+    roslaunch dynasense sim_bps_sensors_only.launch ground_z:=-1.0
+    roslaunch dynasense sim_bps_sensors_only.launch standalone_rviz:=true
+-->
+<launch>
+
+  <!-- RSL feature-toggle config consumed by anymal_d_rsl/bin/sim.py. Identical
+       to rsl.yaml apart from nvidia_rl_controller: sensors_only. -->
+  <arg name="cfg"             default="rsl_bps_sensors.yaml"/>
+
+  <!-- BPS node parameters -->
+  <arg name="bps_config"      default="$(find dynasense)/config/bps.yaml"/>
+  <arg name="launch_bps"      default="true"/>
+  <arg name="publish_markers" default="true"/>
+
+  <!-- Height of the walkable surface in the loaded world. The BPS map drops
+       voxels less than 0.05 m above this, which is what separates obstacles
+       from flat ground when the terrain is a single mesh.
+
+       Default is EMPTY on purpose: a <param> here is applied after the
+       <rosparam command="load"> below and would silently override whatever
+       ground_z bps.yaml sets. Left empty, bps.yaml governs; pass a value to
+       override it for one run. -->
+  <arg name="ground_z"        default=""/>
+
+  <!-- RViz already runs inside the rqt GUI with the BPS displays enabled. Set
+       this to true for a separate, full-window RViz on the same config, which
+       is easier to inspect voxel geometry in than the embedded widget. -->
+  <arg name="standalone_rviz" default="false"/>
+
+  <!-- ANYbotics/RSL simulation stack -->
+  <node pkg="anymal_d_rsl" type="sim.py" name="anymal_d_rsl_sim" output="screen"
+        args="--cfg $(arg cfg)"/>
+
+  <!-- Contact-history BPS map -->
+  <node pkg="dynasense" type="dynasense_bps_node" name="dynasense_bps_node" output="screen"
+        if="$(arg launch_bps)">
+    <rosparam command="load" file="$(arg bps_config)"/>
+    <param name="ground_z"        value="$(arg ground_z)"
+           if="$(eval arg('ground_z') != '')"/>
+    <param name="publish_markers" value="$(arg publish_markers)"/>
+  </node>
+
+  <!-- Optional second RViz -->
+  <node pkg="rviz" type="rviz" name="bps_rviz" output="screen"
+        if="$(arg standalone_rviz)"
+        args="-d $(find anymal_d_rsl)/config/ui/config.rviz -f odom"/>
+
+</launch>

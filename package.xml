@@ -2,7 +2,7 @@
 <package format="2">
   <name>dynasense</name>
   <version>0.0.1</version>
-  <description>Custom Gazebo sensor plugins for Dynasense.</description>
+  <description>Dynasense virtual Gazebo sensors and the contact-history BPS map node.</description>
 
   <maintainer email="user@example.com">Dynasense</maintainer>
   <license>BSD</license>
@@ -17,7 +17,11 @@
   <build_depend>rospy</build_depend>
   <build_depend>sensor_msgs</build_depend>
   <build_depend>std_msgs</build_depend>
+  <build_depend>std_srvs</build_depend>
   <build_depend>tf</build_depend>
+  <build_depend>tf2_eigen</build_depend>
+  <build_depend>tf2_ros</build_depend>
+  <build_depend>eigen</build_depend>
   <build_depend>visualization_msgs</build_depend>
 
   <exec_depend>message_runtime</exec_depend>
@@ -25,13 +29,21 @@
   <exec_depend>gazebo_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
-  <exec_depend>rl_controller</exec_depend>
   <exec_depend>roscpp</exec_depend>
   <exec_depend>rospy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
   <exec_depend>tf</exec_depend>
+  <exec_depend>tf2_eigen</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
+  <!-- Only for the optional standalone_rviz node in
+       sim_bps_sensors_only.launch. anymal_d_rsl, which both sim launch files
+       also reference, is deliberately NOT declared here: it loads this
+       package's Gazebo plugin from its robot description, so the dependency
+       would be circular. -->
+  <exec_depend>rviz</exec_depend>
 
   <export>
     <gazebo_ros plugin_path="${prefix}/lib"/>

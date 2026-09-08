@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<!--
+  Complete Gazebo stack for the ContactBPS locomotion policy.
+
+  Brings up the ANYbotics simulation via the RSL stack launcher (gzserver,
+  ANYmal spawn, motion_control_manager with rl_controller::RlController) and
+  the dynasense BPS node that feeds the policy's exteroceptive observation.
+
+  The ground-clearance rays come from a Gazebo model plugin declared in the
+  robot description, so there is no node for them here.
+
+  Usage:
+    roslaunch dynasense sim_contact_bps.launch
+    roslaunch dynasense sim_contact_bps.launch ground_z:=-1.0
+-->
+<launch>
+
+  <!-- RSL feature-toggle config consumed by anymal_d_rsl/bin/sim.py -->
+  <arg name="cfg"             default="rsl.yaml"/>
+
+  <!-- BPS node parameters -->
+  <arg name="bps_config"      default="$(find dynasense)/config/bps.yaml"/>
+  <arg name="launch_bps"      default="true"/>
+  <arg name="publish_markers" default="true"/>
+
+  <!-- Height of the walkable surface in the loaded world. The BPS map drops
+       voxels less than 0.05 m above this, which is what separates obstacles
+       from flat ground when the terrain is a single mesh.
+
+       Default is EMPTY on purpose: a <param> here is applied after the
+       <rosparam command="load"> below and would silently override whatever
+       ground_z bps.yaml sets. Left empty, bps.yaml governs; pass a value to
+       override it for one run. -->
+  <arg name="ground_z"        default=""/>
+
+  <!-- ANYbotics/RSL simulation stack -->
+  <node pkg="anymal_d_rsl" type="sim.py" name="anymal_d_rsl_sim" output="screen"
+        args="--cfg $(arg cfg)"/>
+
+  <!-- Contact-history BPS map -->
+  <node pkg="dynasense" type="dynasense_bps_node" name="dynasense_bps_node" output="screen"
+        if="$(arg launch_bps)">
+    <rosparam command="load" file="$(arg bps_config)"/>
+    <param name="ground_z"        value="$(arg ground_z)"
+           if="$(eval arg('ground_z') != '')"/>
+    <param name="publish_markers" value="$(arg publish_markers)"/>
+  </node>
+
+</launch>

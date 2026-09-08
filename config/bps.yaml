@@ -1,0 +1,147 @@
+# dynasense_bps_node — contact-history BPS map.
+#
+# Defaults reproduce the training-time sensor described in
+# DS_LOCORESET_DEPTHHEIGHTSCAN_CONTACTBPS_DEPLOYMENT_HANDOVER.md.
+
+odom_frame: odom
+base_frame: base
+
+state_topic: /dynasense/bps_state
+marker_topic: /dynasense/bps_markers
+reset_service: /dynasense/bps/reset
+
+# --- debug visualisation ---------------------------------------------------
+# Both views are debug-only. They read the same current BPS state that built
+# the observation and never affect inference. Markers are only assembled when
+# something is subscribed to marker_topic.
+publish_markers: true
+
+# View 1: one voxel-sized cube per activated voxel, at its world-frame voxel
+# centre, over the UNION of both LRU buffers. Red-orange at 0.6 opacity;
+# contact- and ray-activated voxels are not distinguished. Hidden when the map
+# is empty. "Activated" means retained as a known obstacle voxel - not the
+# distance-dependent gain the actor sees.
+publish_voxel_cubes: true
+
+# View 2: one fixed-length arrow per query point, along the world-frame unit
+# gradient away from the nearest retained cube, coloured by inferno over
+# clamped abs(d)/max_query_distance (d=0 dark, d>=0.5 m bright yellow).
+# Length encodes nothing. This is NOT the actor value: observation [49,151)
+# uses the same direction rotated into the yaw-only base frame and scaled by
+# the gain.
+publish_query_arrows: true
+arrow_length: 0.3
+
+# Display-only cap. Above this many cubes (or arrows) they are stride-
+# subsampled for rendering; the actor input is never subsampled. 0 disables.
+marker_max_count: 20000
+
+# Policy rate. The map is fed asynchronously by the sensor callbacks; this is
+# the rate at which the 34 query points are evaluated and published.
+update_rate: 50.0
+tf_timeout: 0.02
+
+# Gazebo model name of the robot; used to reject self-collisions.
+robot_model_name: anymal
+
+# --- voxel activation ------------------------------------------------------
+# The two independent ways a voxel becomes "activated" (retained as a known
+# obstacle) can be switched off individually. A disabled path is not subscribed
+# at all and its LRU buffer is given capacity 0, so it is an exact off switch.
+#
+# With BOTH off the map stays permanently empty: all 102 BPS observation values
+# are exactly zero and the policy is BLIND TO OBSTACLES. Visual signature of
+# that state: no red-orange cubes at all, and all 34 query arrows bright yellow
+# pointing in arbitrary directions (see README). Set both true for normal
+# operation.
+# enable_contact_voxels: true    # physical THIGH/SHANK contacts
+# enable_ray_voxels: true        # external depth-camera and lidar hits
+
+enable_contact_voxels: false   
+enable_ray_voxels: false        
+
+# --- voxel map -------------------------------------------------------------
+voxel_size: 0.05
+max_query_distance: 0.5
+contact_buffer_capacity: 200
+ray_buffer_capacity: 500
+
+# Height band a voxel centre must fall in to be buffered, relative to ground_z.
+# Reproduces the training grid's z extent of [-0.2, 1.8) combined with its
+# "at least 0.05 m above the ground surface" filter. With a single terrain mesh
+# there is no ground/obstacle split, so ground_z is a flat constant: set it to
+# the height of the walkable surface in the loaded world.
+#
+# This value now governs. Both sim launch files used to override it with their
+# own `ground_z` arg regardless; they now apply that arg only when it is
+# explicitly passed on the command line.
+ground_z: 0.01
+min_height_above_ground: 0.05
+max_height_above_ground: 1.8
+
+# Horizontal gate around the base, reproducing the training grid's 8 x 8 m extent.
+max_horizontal_range: 4.0
+
+# --- physical contacts -----------------------------------------------------
+contact_topic_format: "/contacts/{leg}/{body}"
+
+# {body} values substituted into contact_topic_format above, i.e. one Gazebo
+# contact sensor per (leg, body) = 12 topics. Each body keeps its own
+# rising-edge state.
+#
+# The e-flesh-covered collisions are spread over three URDF links:
+#   thigh -> {leg}_thigh_fixed : thigh upper / shaft / lower + HFE & KFE drives
+#   shank -> {leg}_shank_fixed : knee cylinder + shank box
+#   foot  -> {leg}_FOOT        : the shin TUBE only
+# The foot BALL (the ground contact point) is excluded in the URDF, by binding
+# only the tube collision -- not by any filter here. The ball must stay UNNAMED
+# in the URDF or ANYbotics' contact detection stops seeing the feet. See
+# leg_eflesh/foot/foot_3_6_3_macro.urdf.xacro.
+contact_bodies: [thigh, shank, foot]
+
+contact_force_threshold: 1.0
+contact_rising_edge_only: true
+
+# Which frame gazebo_ros_bumper's contact_positions are really in.
+#
+#   odom    verbatim, no transform. The bumper reports Gazebo WORLD coordinates
+#           regardless of its <frameName>, and the Gazebo world coincides with
+#           odom in this sim -- the ground-clearance plugin depends on the same
+#           thing, publishing raw world hit points labelled `odom`.
+#   header  treat them as local to header.frame_id (<LEG>_THIGH / <LEG>_SHANK)
+#           and transform odom <- that frame. This was the original assumption
+#           and it put the voxels in the wrong place.
+#
+# The node prints both interpretations for the first `contact_frame_debug_count`
+# contacts. Whichever column lands on the robot is the correct mode.
+contact_position_frame: odom
+contact_frame_debug_count: 10
+
+# --- external rays ---------------------------------------------------------
+# Self-filtered clouds: the ANYbotics point-cloud self-filter has already
+# removed robot-body returns, so what arrives is obstacle hits plus ground
+# (the ground is then dropped by the min_height_above_ground gate).
+depth_cloud_topics:
+  - /depth_camera_front_upper/point_cloud_self_filtered
+  - /depth_camera_front_lower/point_cloud_self_filtered
+  - /depth_camera_rear_upper/point_cloud_self_filtered
+  - /depth_camera_rear_lower/point_cloud_self_filtered
+  - /depth_camera_left/point_cloud_self_filtered
+  - /depth_camera_right/point_cloud_self_filtered
+
+camera_pattern_cols: 24
+camera_pattern_rows: 16
+camera_hfov_deg: 86.62
+camera_vfov_deg: 59.73
+camera_optical_frame: true
+
+ray_max_range: 1.0
+
+use_lidar: true
+lidar_topic: /lidar/point_cloud
+lidar_channels: 5
+lidar_hfov_min_deg: -160.0
+lidar_hfov_max_deg: 160.0
+lidar_vfov_min_deg: 0.0
+lidar_vfov_max_deg: 15.0
+lidar_horizontal_resolution_deg: 30.0
