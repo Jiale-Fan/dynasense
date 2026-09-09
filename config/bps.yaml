@@ -54,11 +54,11 @@ robot_model_name: anymal
 # that state: no red-orange cubes at all, and all 34 query arrows bright yellow
 # pointing in arbitrary directions (see README). Set both true for normal
 # operation.
-# enable_contact_voxels: true    # physical THIGH/SHANK contacts
-# enable_ray_voxels: true        # external depth-camera and lidar hits
+enable_contact_voxels: true    # physical THIGH/SHANK contacts
+enable_ray_voxels: true        # external depth-camera and lidar hits
 
-enable_contact_voxels: false   
-enable_ray_voxels: false        
+# enable_contact_voxels: false   
+# enable_ray_voxels: false        
 
 # --- voxel map -------------------------------------------------------------
 voxel_size: 0.05
