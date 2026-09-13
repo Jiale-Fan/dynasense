@@ -92,6 +92,13 @@ add_library(dynasense_foot_tof_pc_plugin foot_tof/src/foot_tof_ray_pointcloud_pl
 target_link_libraries(dynasense_foot_tof_pc_plugin ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES})
 add_dependencies(dynasense_foot_tof_pc_plugin ${catkin_EXPORTED_TARGETS})
 
+if(CATKIN_ENABLE_TESTING)
+  find_package(rostest REQUIRED)
+  catkin_install_python(PROGRAMS test/test_frame_alignment.py
+    DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+  add_rostest(test/frame_alignment.test DEPENDENCIES dynasense_bps_node)
+endif()
+
 #############
 ## Install ##
 #############

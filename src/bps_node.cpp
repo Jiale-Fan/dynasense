@@ -7,7 +7,7 @@
 // Inputs
 //   /contacts/{LF,LH,RF,RH}/{thigh,shank}   gazebo_msgs/ContactsState
 //   /depth_camera_*/point_cloud_self_filtered + lidar  sensor_msgs/PointCloud2
-//   TF: odom <- base, *_THIGH, *_SHANK, *_FOOT
+//   TF: map_frame (Gazebo world by default) <- sensors and robot links
 //
 // Outputs
 //   /dynasense/bps_state     dynasense/BpsState        (policy rate)
@@ -139,7 +139,12 @@ class BpsNode {
   // -------------------------------------------------------------------------
 
   void loadParameters() {
-    pnh_.param<std::string>("odom_frame", odomFrame_, "odom");
+    // Keep history in the static Gazebo world, not in drifting estimator odom.
+    // Accept the old storage-frame parameter for custom configurations, but
+    // still transform world-frame contacts into that frame explicitly.
+    if (!pnh_.getParam("map_frame", mapFrame_)) {
+      pnh_.param<std::string>("odom_frame", mapFrame_, "world");
+    }
     pnh_.param<std::string>("base_frame", baseFrame_, "base");
     pnh_.param<std::string>("state_topic", statePublishTopic_, "/dynasense/bps_state");
     pnh_.param<std::string>("marker_topic", markerTopic_, "/dynasense/bps_markers");
@@ -164,20 +169,18 @@ class BpsNode {
     pnh_.param<bool>("contact_rising_edge_only", contactRisingEdgeOnly_, true);
     pnh_.param<std::string>("contact_topic_format", contactTopicFormat_, "/contacts/{leg}/{body}");
 
-    // Which frame gazebo_ros_bumper's contact_positions are actually in.
-    //   "odom"   -- verbatim, no transform. The bumper reports Gazebo WORLD
-    //               coordinates, and the Gazebo world coincides with odom in
-    //               this sim (the ground-clearance plugin relies on the same
-    //               thing: it publishes raw world hit points labelled odom).
-    //   "header" -- treat them as local to msg->header.frame_id and transform
-    //               odom <- that frame. Correct only if the bumper honours its
-    //               <frameName>, which it is not trusted to do.
-    // Anything else falls back to "odom" with a warning.
-    pnh_.param<std::string>("contact_position_frame", contactPositionFrame_, "odom");
-    if (contactPositionFrame_ != "odom" && contactPositionFrame_ != "header") {
+    // Stock gazebo_ros_bumper reports WORLD coordinates even when its header
+    // names a robot link. "header" is only for publishers with frame-local data.
+    pnh_.param<std::string>("contact_position_frame", contactPositionFrame_, "world");
+    if (contactPositionFrame_ == "odom") {
+      ROS_WARN("[dynasense_bps] contact_position_frame 'odom' is a legacy name for Gazebo world coordinates; "
+               "using 'world' and transforming to the configured map_frame");
+      contactPositionFrame_ = "world";
+    }
+    if (contactPositionFrame_ != "world" && contactPositionFrame_ != "header") {
       ROS_WARN_STREAM("[dynasense_bps] contact_position_frame '" << contactPositionFrame_
-                                                                 << "' unknown; using 'odom'");
-      contactPositionFrame_ = "odom";
+                                                                 << "' unknown; using 'world'");
+      contactPositionFrame_ = "world";
     }
     pnh_.param<int>("contact_frame_debug_count", contactFrameDebugCount_, 10);
 
@@ -423,38 +426,24 @@ class BpsNode {
       return;
     }
 
-    // gazebo_ros_bumper's contact_positions are Gazebo WORLD coordinates even
-    // though the header carries <frameName>. See contact_position_frame.
+    // Convert from the actual source frame, not the stock bumper's misleading
+    // link-frame header. No TF lookup is needed for the default world map.
     const Eigen::Vector3d raw(bestPosition->x, bestPosition->y, bestPosition->z);
-
-    Eigen::Isometry3d odomFromSensor = Eigen::Isometry3d::Identity();
-    bool haveSensorTf = false;
-    if (!msg->header.frame_id.empty() && msg->header.frame_id != odomFrame_) {
-      haveSensorTf = lookup(odomFrame_, msg->header.frame_id, msg->header.stamp, odomFromSensor);
-    } else {
-      haveSensorTf = true;  // already odom
+    const std::string sourceFrame = contactPositionFrame_ == "header" ? msg->header.frame_id : "world";
+    Eigen::Isometry3d mapFromContact = Eigen::Isometry3d::Identity();
+    if (sourceFrame.empty() ||
+        (sourceFrame != mapFrame_ && !lookup(mapFrame_, sourceFrame, msg->header.stamp, mapFromContact))) {
+      // Retry a held contact when its first message arrived before TF was ready.
+      contactState_[index] = false;
+      return;
     }
+    const Eigen::Vector3d world = mapFromContact * raw;
 
-    // Print both interpretations for the first few contacts so the frame can be
-    // settled by eye: whichever column lands on the robot is the right one.
     if (contactFrameDebugCount_ > 0) {
       --contactFrameDebugCount_;
-      const Eigen::Vector3d asHeader = odomFromSensor * raw;
-      ROS_INFO_STREAM("[dynasense_bps] contact frame check ("
-                      << msg->header.frame_id << ", using '" << contactPositionFrame_ << "'): raw/as-odom ["
-                      << raw.x() << ", " << raw.y() << ", " << raw.z() << "]  as-header ["
-                      << asHeader.x() << ", " << asHeader.y() << ", " << asHeader.z() << "]"
-                      << (haveSensorTf ? "" : "  (header TF unavailable)"));
-    }
-
-    Eigen::Vector3d world;
-    if (contactPositionFrame_ == "header") {
-      if (!haveSensorTf) {
-        return;
-      }
-      world = odomFromSensor * raw;
-    } else {
-      world = raw;
+      ROS_INFO_STREAM("[dynasense_bps] contact frame check: " << sourceFrame << " ["
+                      << raw.x() << ", " << raw.y() << ", " << raw.z() << "] -> " << mapFrame_ << " ["
+                      << world.x() << ", " << world.y() << ", " << world.z() << "]");
     }
 
     bool inserted = false;
@@ -466,12 +455,12 @@ class BpsNode {
     // Every gate in this path used to be silent, which made a dropped contact
     // indistinguishable from a contact that never happened. Say which it was.
     if (inserted) {
-      ROS_INFO_STREAM_THROTTLE(1.0, "[dynasense_bps] voxel from " << label << " at odom z=" << world.z()
+      ROS_INFO_STREAM_THROTTLE(1.0, "[dynasense_bps] voxel from " << label << " at " << mapFrame_ << " z=" << world.z()
                                                                   << " (force " << bestForce << " N)");
     } else {
       const double lo = mapConfig_.groundZ + mapConfig_.minHeightAboveGround;
       const double hi = mapConfig_.groundZ + mapConfig_.maxHeightAboveGround;
-      ROS_WARN_STREAM_THROTTLE(1.0, "[dynasense_bps] contact from " << label << " REJECTED: odom ["
+      ROS_WARN_STREAM_THROTTLE(1.0, "[dynasense_bps] contact from " << label << " REJECTED: " << mapFrame_ << " ["
                                                                     << world.x() << ", " << world.y() << ", "
                                                                     << world.z() << "], accepted height band is ["
                                                                     << lo << ", " << hi << ") and horizontal range is "
@@ -568,9 +557,13 @@ class BpsNode {
       return;
     }
 
-    Eigen::Isometry3d odomFromSensor = Eigen::Isometry3d::Identity();
-    if (!msg->header.frame_id.empty() && msg->header.frame_id != odomFrame_) {
-      if (!lookup(odomFrame_, msg->header.frame_id, msg->header.stamp, odomFromSensor)) {
+    if (msg->header.frame_id.empty()) {
+      ROS_WARN_STREAM_THROTTLE(2.0, "[dynasense_bps] " << source.topic << ": skipping cloud with no source frame");
+      return;
+    }
+    Eigen::Isometry3d mapFromSensor = Eigen::Isometry3d::Identity();
+    if (msg->header.frame_id != mapFrame_) {
+      if (!lookup(mapFrame_, msg->header.frame_id, msg->header.stamp, mapFromSensor)) {
         return;
       }
     }
@@ -580,7 +573,7 @@ class BpsNode {
       if (nearestRange[cell] == std::numeric_limits<float>::max()) {
         continue;
       }
-      map_.addRayPoint(odomFromSensor * nearestPoint[cell].cast<double>());
+      map_.addRayPoint(mapFromSensor * nearestPoint[cell].cast<double>());
     }
   }
 
@@ -607,58 +600,59 @@ class BpsNode {
     // capture time.
     const ros::Time queryTime(0);
 
-    Eigen::Isometry3d odomFromBase = Eigen::Isometry3d::Identity();
-    if (!lookup(odomFrame_, baseFrame_, queryTime, odomFromBase)) {
+    Eigen::Isometry3d mapFromBase = Eigen::Isometry3d::Identity();
+    if (!lookup(mapFrame_, baseFrame_, queryTime, mapFromBase)) {
       return;
     }
 
     // Body poses for the 34 query points: base plus THIGH/SHANK/FOOT per leg.
-    std::array<Eigen::Isometry3d, 4> odomFromThigh;
-    std::array<Eigen::Isometry3d, 4> odomFromShank;
-    std::array<Eigen::Isometry3d, 4> odomFromFoot;
+    std::array<Eigen::Isometry3d, 4> mapFromThigh;
+    std::array<Eigen::Isometry3d, 4> mapFromShank;
+    std::array<Eigen::Isometry3d, 4> mapFromFoot;
     for (int leg = 0; leg < 4; ++leg) {
       const std::string legName = queryLegNames()[leg];
-      if (!lookup(odomFrame_, legName + "_THIGH", queryTime, odomFromThigh[leg]) ||
-          !lookup(odomFrame_, legName + "_SHANK", queryTime, odomFromShank[leg]) ||
-          !lookup(odomFrame_, legName + "_FOOT", queryTime, odomFromFoot[leg])) {
+      if (!lookup(mapFrame_, legName + "_THIGH", queryTime, mapFromThigh[leg]) ||
+          !lookup(mapFrame_, legName + "_SHANK", queryTime, mapFromShank[leg]) ||
+          !lookup(mapFrame_, legName + "_FOOT", queryTime, mapFromFoot[leg])) {
         return;
       }
     }
 
     // The BPS directions are expressed in the yaw-only base frame, unlike the
     // proprioceptive part of the observation which uses the full base frame.
-    const Eigen::Matrix3d R_yawBase_odom = yawOnly(odomFromBase.rotation()).transpose();
+    const Eigen::Matrix3d R_yawBase_map = yawOnly(mapFromBase.rotation()).transpose();
 
     dynasense::BpsState msg;
     msg.header.stamp = stamp;
-    msg.header.frame_id = baseFrame_;
+    // Header describes query_points; directions remain in the yaw-only base frame.
+    msg.header.frame_id = mapFrame_;
 
     std::lock_guard<std::mutex> lock(mapMutex_);
-    map_.setBasePosition(odomFromBase.translation());
+    map_.setBasePosition(mapFromBase.translation());
 
     const std::vector<QueryPointSpec>& specs = queryPointSpecs();
     for (std::size_t i = 0; i < specs.size(); ++i) {
       const QueryPointSpec& spec = specs[i];
 
-      const Eigen::Isometry3d* bodyPose = &odomFromBase;
+      const Eigen::Isometry3d* bodyPose = &mapFromBase;
       switch (spec.body) {
         case QueryBody::Base:
-          bodyPose = &odomFromBase;
+          bodyPose = &mapFromBase;
           break;
         case QueryBody::Thigh:
-          bodyPose = &odomFromThigh[spec.leg];
+          bodyPose = &mapFromThigh[spec.leg];
           break;
         case QueryBody::Shank:
-          bodyPose = &odomFromShank[spec.leg];
+          bodyPose = &mapFromShank[spec.leg];
           break;
         case QueryBody::Foot:
-          bodyPose = &odomFromFoot[spec.leg];
+          bodyPose = &mapFromFoot[spec.leg];
           break;
       }
 
-      const Eigen::Vector3d pointOdom = (*bodyPose) * spec.local;
-      const BpsQueryResult result = map_.query(pointOdom);
-      const Eigen::Vector3d directionBase = R_yawBase_odom * result.directionWorld;
+      const Eigen::Vector3d pointMap = (*bodyPose) * spec.local;
+      const BpsQueryResult result = map_.query(pointMap);
+      const Eigen::Vector3d directionBase = R_yawBase_map * result.directionWorld;
 
       // Kept for the arrow view: the WORLD-frame unit gradient, without the
       // gain. The actor value below is a different quantity - same direction,
@@ -669,9 +663,9 @@ class BpsNode {
       msg.directions[3 * i + 1] = static_cast<float>(directionBase.y());
       msg.directions[3 * i + 2] = static_cast<float>(directionBase.z());
       msg.distances[i] = static_cast<float>(result.distance);
-      msg.query_points[i].x = pointOdom.x();
-      msg.query_points[i].y = pointOdom.y();
-      msg.query_points[i].z = pointOdom.z();
+      msg.query_points[i].x = pointMap.x();
+      msg.query_points[i].y = pointMap.y();
+      msg.query_points[i].z = pointMap.z();
     }
 
     msg.num_contact_voxels = static_cast<uint32_t>(map_.numContactVoxels());
@@ -732,7 +726,7 @@ class BpsNode {
 
     visualization_msgs::Marker marker;
     marker.header.stamp = stamp;
-    marker.header.frame_id = odomFrame_;
+    marker.header.frame_id = mapFrame_;
     marker.ns = "bps_activated_voxels";
     marker.id = 0;
     marker.type = visualization_msgs::Marker::CUBE_LIST;
@@ -785,7 +779,7 @@ class BpsNode {
     for (std::size_t i = 0; i < count; ++i) {
       visualization_msgs::Marker marker;
       marker.header.stamp = stamp;
-      marker.header.frame_id = odomFrame_;
+      marker.header.frame_id = mapFrame_;
       marker.ns = "bps_query_arrows";
       marker.id = static_cast<int>(i);
       marker.type = visualization_msgs::Marker::ARROW;
@@ -869,7 +863,7 @@ class BpsNode {
   //! Sized in the constructor.
   std::vector<Eigen::Vector3d> queryUnitDirections_;
 
-  std::string odomFrame_;
+  std::string mapFrame_;
   std::string baseFrame_;
   std::string statePublishTopic_;
   std::string markerTopic_;
@@ -883,7 +877,7 @@ class BpsNode {
   std::size_t markerMaxCount_{20000};
   bool contactRisingEdgeOnly_{true};
   std::vector<std::string> contactTopics_;
-  std::string contactPositionFrame_{"odom"};
+  std::string contactPositionFrame_{"world"};
   int contactFrameDebugCount_{10};
   double updateRate_{50.0};
   double tfTimeout_{0.02};

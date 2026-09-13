@@ -3,7 +3,9 @@
 # Defaults reproduce the training-time sensor described in
 # DS_LOCORESET_DEPTHHEIGHTSCAN_CONTACTBPS_DEPLOYMENT_HANDOVER.md.
 
-odom_frame: odom
+# Gazebo's static world frame holds the voxel history, ray hits and query points.
+# Estimator odom can drift relative to world; it must not relabel raw contacts.
+map_frame: world
 base_frame: base
 
 state_topic: /dynasense/bps_state
@@ -54,11 +56,11 @@ robot_model_name: anymal
 # that state: no red-orange cubes at all, and all 34 query arrows bright yellow
 # pointing in arbitrary directions (see README). Set both true for normal
 # operation.
-enable_contact_voxels: true    # physical THIGH/SHANK contacts
-enable_ray_voxels: true        # external depth-camera and lidar hits
+# enable_contact_voxels: true    # physical THIGH/SHANK contacts
+# enable_ray_voxels: true        # external depth-camera and lidar hits
 
-# enable_contact_voxels: false   
-# enable_ray_voxels: false        
+enable_contact_voxels: true   
+enable_ray_voxels: false        
 
 # --- voxel map -------------------------------------------------------------
 voxel_size: 0.05
@@ -104,17 +106,15 @@ contact_rising_edge_only: true
 
 # Which frame gazebo_ros_bumper's contact_positions are really in.
 #
-#   odom    verbatim, no transform. The bumper reports Gazebo WORLD coordinates
-#           regardless of its <frameName>, and the Gazebo world coincides with
-#           odom in this sim -- the ground-clearance plugin depends on the same
-#           thing, publishing raw world hit points labelled `odom`.
+#   world   Gazebo world coordinates, regardless of the bumper's <frameName>.
+#           Converted from world into map_frame when those frames differ.
 #   header  treat them as local to header.frame_id (<LEG>_THIGH / <LEG>_SHANK)
-#           and transform odom <- that frame. This was the original assumption
-#           and it put the voxels in the wrong place.
+#           and transform map_frame <- that frame. Use only with a publisher
+#           that actually supplies frame-local points, not stock gazebo_ros_bumper.
 #
-# The node prints both interpretations for the first `contact_frame_debug_count`
-# contacts. Whichever column lands on the robot is the correct mode.
-contact_position_frame: odom
+# The legacy value `odom` is accepted as an alias for `world` with a warning.
+# The node prints source and map coordinates for the first few contacts.
+contact_position_frame: world
 contact_frame_debug_count: 10
 
 # --- external rays ---------------------------------------------------------

@@ -10,13 +10,13 @@
 #   LF, LH, RF, RH (in that order), each 7 points:
 #             THIGH 3, SHANK 1, FOOT 3
 
-std_msgs/Header header          # stamp = query time; frame_id = yaw-only base frame
+std_msgs/Header header          # stamp = query time; frame_id = map_frame (world by default)
 
-float32[102] directions         # 34 x [x, y, z]
+float32[102] directions         # 34 x [x, y, z], expressed in the YAW-ONLY base frame
 
 # --- debug / visualisation, not consumed by the policy ---
 
 float32[34] distances                   # exterior-box SDF distance per query point, capped at 0.5 m
-geometry_msgs/Point[34] query_points    # the 34 query points in the odom frame
+geometry_msgs/Point[34] query_points    # the 34 query points in header.frame_id
 uint32 num_contact_voxels               # occupancy of the physical-contact LRU buffer
 uint32 num_ray_voxels                   # occupancy of the external-ray LRU buffer

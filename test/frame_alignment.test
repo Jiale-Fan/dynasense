@@ -1,0 +1,35 @@
+<launch>
+  <!-- No Gazebo: a synthetic contact and cloud observe the same world point.
+       The second node also exercises conversion into a non-world map frame. -->
+  <node pkg="dynasense" type="dynasense_bps_node" name="world_bps" output="screen">
+    <rosparam command="load" file="$(find dynasense)/config/bps.yaml"/>
+    <param name="state_topic" value="/frame_test/world/state"/>
+    <param name="marker_topic" value="/frame_test/world/markers"/>
+    <param name="reset_service" value="/frame_test/world/reset"/>
+    <param name="contact_topic_format" value="/frame_test/contacts/{leg}/{body}"/>
+    <rosparam param="contact_bodies">[thigh]</rosparam>
+    <rosparam param="depth_cloud_topics">[/frame_test/cloud]</rosparam>
+    <param name="camera_optical_frame" value="false"/>
+    <param name="use_lidar" value="false"/>
+    <param name="contact_rising_edge_only" value="false"/>
+    <param name="contact_frame_debug_count" value="0"/>
+  </node>
+  <node pkg="dynasense" type="dynasense_bps_node" name="odom_bps" output="screen">
+    <rosparam command="load" file="$(find dynasense)/config/bps.yaml"/>
+    <param name="map_frame" value="odom"/>
+    <param name="ground_z" value="-0.3"/>
+    <!-- Historical 'odom' mode actually meant raw Gazebo world coordinates. -->
+    <param name="contact_position_frame" value="odom"/>
+    <param name="state_topic" value="/frame_test/odom/state"/>
+    <param name="marker_topic" value="/frame_test/odom/markers"/>
+    <param name="reset_service" value="/frame_test/odom/reset"/>
+    <param name="contact_topic_format" value="/frame_test/contacts/{leg}/{body}"/>
+    <rosparam param="contact_bodies">[thigh]</rosparam>
+    <rosparam param="depth_cloud_topics">[/frame_test/cloud]</rosparam>
+    <param name="camera_optical_frame" value="false"/>
+    <param name="use_lidar" value="false"/>
+    <param name="contact_rising_edge_only" value="false"/>
+    <param name="contact_frame_debug_count" value="0"/>
+  </node>
+  <test test-name="frame_alignment" pkg="dynasense" type="test_frame_alignment.py" time-limit="45"/>
+</launch>

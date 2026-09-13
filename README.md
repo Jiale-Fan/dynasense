@@ -26,8 +26,8 @@ Produces the exteroceptive two thirds of the observation for
 
 ```
 gzserver
-  libgazebo_ros_bumper.so x8 (declared in the ANYmal-D leg xacros)
-      -> /contacts/{LF,LH,RF,RH}/{thigh,shank}   gazebo_msgs/ContactsState @200 Hz
+  libgazebo_ros_bumper.so x12 (declared in the ANYmal-D leg xacros)
+      -> /contacts/{LF,LH,RF,RH}/{thigh,shank,foot}   gazebo_msgs/ContactsState @200 Hz
   libdynasense_ground_clearance_plugin.so
       -> /dynasense/ground_clearance             dynasense/GroundClearance @50 Hz
       -> /dynasense/ground_clearance_markers     visualization_msgs/Marker (debug)
@@ -61,6 +61,32 @@ working as intended rather than a rate problem: a voxel stays buffered until it
 is evicted, so the cube cloud keeps everything seen over the last 200/500
 insertions. `max_horizontal_range` gates *insertion* only — it does not remove
 voxels once the robot has walked away from them.
+
+### Coordinate frames
+
+`map_frame: world` keeps the voxel history in Gazebo's static world frame.
+The stock ROS Noetic bumper publishes world-coordinate contact points even
+when its header names a robot link. `contact_position_frame: world` handles
+that explicitly; points are transformed if a different map frame is configured.
+Do not select `header` for the stock bumper or assume estimator `odom` equals
+Gazebo `world`.
+
+Depth/lidar hits and robot query poses are transformed into the same map frame.
+Voxel and query-arrow markers, plus `BpsState.header` and `query_points`, name
+that frame. The policy's 102 `directions` values remain in the yaw-only base
+frame. Ground-clearance hit markers also use `world`; scalar clearances are
+unchanged. RViz can use `odom` as its fixed frame because TF places the world
+mesh and world markers together.
+
+For older configuration files, `odom_frame` is a fallback name for `map_frame`;
+the old `contact_position_frame: odom` value means world-coordinate bumper
+points and is accepted with a warning. `ground_z` is measured in the chosen
+map frame. Restart the BPS node after changing frames so old voxels are cleared.
+
+The frame regression test needs ROS but no simulator. After rebuilding, run
+`rostest dynasense frame_alignment.test`. It feeds matching synthetic contact
+and camera hits through a translated/rotated world-to-odom TF and checks their
+voxel alignment, query/marker frames, and yaw-only policy directions.
 
 ### Run
 
@@ -106,10 +132,8 @@ A disabled path is not subscribed at all and its LRU buffer is given capacity 0,
 so nothing is retained and nothing reaches a query — an exact off switch, not a
 downstream filter.
 
-> **Both currently ship OFF.** The map stays permanently empty, so all 102 BPS
-> observation values are exactly zero and the policy is **blind to obstacles**.
-> This is a deliberate debugging configuration for checking behaviour without
-> meaningful BPS input. Set both back to `true` for normal operation.
+Both ship enabled. Setting both to `false` makes the map empty and the policy
+blind to obstacles; use this only to debug behaviour without BPS input.
 
 The node says so loudly: a startup `WARN` when both are off, plus a `WARN` every
 10 s while either is off. The node still publishes `/dynasense/bps_state` at the
@@ -178,7 +202,7 @@ voxels whose centre is less than `min_height_above_ground` (0.05 m) above
 the walkable surface in the loaded world** — it is the one parameter you must get
 right per terrain.
 
-The grid itself is a global 5 cm lattice in `odom` rather than the training
+The grid itself is a global 5 cm lattice in `map_frame` (`world` by default) rather than the training
 sensor's `160x160x40` per-environment grid, which has no deployment equivalent.
 The training extent is reproduced by the height band and by
 `max_horizontal_range` (4 m from the base). Both LRU buffers are hard-capped, so
@@ -186,14 +210,15 @@ memory is bounded regardless.
 
 ### Contact sensors
 
-Declared in `anymal_d_rsl/assets/urdf/leg_eflesh/{thigh,shank}/*_macro.urdf.xacro`
+Declared in `anymal_d_rsl/assets/urdf/leg_eflesh/{thigh,shank,foot}/*_macro.urdf.xacro`
 with the stock `libgazebo_ros_bumper.so`. Two details matter:
 
 - URDF fixed-joint lumping folds `<LEG>_thigh_fixed` into `<LEG>_THIGH` and
-  mangles collision names, so the sensors bind with
-  `<collision>__default__</collision>` (every collision of the lumped link).
-- `<frameName>` is the link that **survives** lumping (`<LEG>_THIGH`,
-  `<LEG>_SHANK`), so patch positions land in a frame that exists in TF. The
+  mangles collision names, so the sensors bind explicit collision names with
+  their fixed-joint lump prefixes and index suffixes. The foot sensor binds
+  only the shin tube, excluding the foot ball.
+- `<frameName>` names a surviving link (`<LEG>_THIGH`, `<LEG>_SHANK`), but the
+  stock bumper still publishes world-coordinate patch positions. The
   older `/contacts/<LEG>/knee_cylinder` sensor names `<LEG>_shank_fixed`, which
   does not survive; it is left as-is because `knee_eflesh_ros` consumes it.
 

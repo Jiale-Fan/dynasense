@@ -45,6 +45,8 @@
        would be circular. -->
   <exec_depend>rviz</exec_depend>
 
+  <test_depend>rostest</test_depend>
+
   <export>
     <gazebo_ros plugin_path="${prefix}/lib"/>
   </export>

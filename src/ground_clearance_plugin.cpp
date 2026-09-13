@@ -10,6 +10,7 @@
 //   <plugin name="dynasense_ground_clearance"
 //           filename="libdynasense_ground_clearance_plugin.so">
 //     <topicName>/dynasense/ground_clearance</topicName>
+//     <frameName>world</frameName>          <!-- TF name for the Gazebo world frame -->
 //     <updateRate>50</updateRate>
 //     <maxRange>2.0</maxRange>
 //     <robotModel>anymal</robotModel>       <!-- hits on this model are ignored -->
@@ -80,7 +81,9 @@ public:
     }
     topic_name_ = sdf->HasElement("topicName") ? sdf->Get<std::string>("topicName")
                                                : std::string("/dynasense/ground_clearance");
-    frame_name_ = sdf->HasElement("frameName") ? sdf->Get<std::string>("frameName") : std::string("odom");
+    // CastRay returns Gazebo world coordinates. This names that frame; it does
+    // not transform hit points into a different frame such as odom.
+    frame_name_ = sdf->HasElement("frameName") ? sdf->Get<std::string>("frameName") : std::string("world");
     max_range_ = sdf->HasElement("maxRange") ? sdf->Get<double>("maxRange") : 2.0;
     update_rate_ = sdf->HasElement("updateRate") ? sdf->Get<double>("updateRate") : 50.0;
     robot_model_ = sdf->HasElement("robotModel") ? sdf->Get<std::string>("robotModel") : model_->GetName();
