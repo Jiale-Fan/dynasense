@@ -1,0 +1,35 @@
+<launch>
+  <!-- Synthetic 8x4 depth images, no bag and no Gazebo. Three converter
+       instances share one input topic: full resolution, decimation 2, and one
+       that adopts a live camera_info. Intrinsics fx=fy=100, cx=3.5, cy=1.5. -->
+  <node pkg="dynasense" type="dynasense_depth_image_to_pointcloud_node" name="depth2pc_full" output="screen">
+    <rosparam command="load" file="$(find dynasense)/config/depth_cameras.yaml"/>
+    <param name="decimation" value="1"/>
+    <param name="max_rate" value="0.0"/>
+    <param name="process_without_subscribers" value="true"/>
+    <param name="use_live_camera_info" value="false"/>
+    <rosparam param="default_intrinsics">{width: 8, height: 4, fx: 100.0, fy: 100.0, cx: 3.5, cy: 1.5}</rosparam>
+    <rosparam param="cameras">[{name: test, namespace: /depth2pc_test/full}]</rosparam>
+  </node>
+  <node pkg="dynasense" type="dynasense_depth_image_to_pointcloud_node" name="depth2pc_dec" output="screen">
+    <rosparam command="load" file="$(find dynasense)/config/depth_cameras.yaml"/>
+    <param name="decimation" value="2"/>
+    <param name="max_rate" value="0.0"/>
+    <param name="process_without_subscribers" value="true"/>
+    <param name="use_live_camera_info" value="false"/>
+    <rosparam param="default_intrinsics">{width: 8, height: 4, fx: 100.0, fy: 100.0, cx: 3.5, cy: 1.5}</rosparam>
+    <rosparam param="cameras">[{name: test, namespace: /depth2pc_test/dec,
+                                image_topic: /depth2pc_test/full/depth/image_rect_raw}]</rosparam>
+  </node>
+  <node pkg="dynasense" type="dynasense_depth_image_to_pointcloud_node" name="depth2pc_live" output="screen">
+    <rosparam command="load" file="$(find dynasense)/config/depth_cameras.yaml"/>
+    <param name="decimation" value="1"/>
+    <param name="max_rate" value="0.0"/>
+    <param name="process_without_subscribers" value="true"/>
+    <param name="use_live_camera_info" value="true"/>
+    <rosparam param="default_intrinsics">{width: 8, height: 4, fx: 100.0, fy: 100.0, cx: 3.5, cy: 1.5}</rosparam>
+    <rosparam param="cameras">[{name: test, namespace: /depth2pc_test/live,
+                                image_topic: /depth2pc_test/full/depth/image_rect_raw}]</rosparam>
+  </node>
+  <test test-name="depth_image_to_pointcloud" pkg="dynasense" type="test_depth_image_to_pointcloud.py" time-limit="90"/>
+</launch>

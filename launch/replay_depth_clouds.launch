@@ -1,0 +1,85 @@
+<?xml version="1.0"?>
+<!--
+  Replay a real-robot bag and turn its depth images into point clouds.
+
+
+  /home/tianaoxu/Documents/rosbags/23sept/jiale_dynasense_files/
+  2026-09-23-18-25-44.bag  2026-09-23-18-30-12.bag
+  2026-09-23-18-29-01.bag  2026-09-23-18-31-02.bag
+
+
+
+  What starts:
+    - use_sim_time + rosbag play - -clock: the header stamps are the recording
+      date; without sim time RViz and TF drop everything as too old.
+    - anymal_description from the RSL xacro with bagfile_is_played:=true, for
+      the RobotModel display only. Joint TFs and the CALIBRATED camera chain
+      come from the bag's /tf and /tf_static, so there is no
+      robot_state_publisher and no static_transform_publisher for the depth
+      optical frames (a second parent would break the TF tree).
+    - tf_static_aggregator.py: rosbag play re-latches only the LAST of the
+      bag's nine /tf_static messages to late subscribers, so anything that
+      starts after the first milliseconds of playback would never see the
+      camera frames. The aggregator loads the statics from the bag file and
+      re-latches the union; this also covers start:=N, which skips them.
+    - the converter (depth_image_to_pointcloud.launch), capped at 15 Hz per
+      camera by default: 6 cameras x 60 Hz x 1.6 MB would be ~590 MB/s into RViz.
+    - RViz with anymal_d_rsl/config/ui/config_depth_lidar.rviz, group
+      "Dynasense Depth Clouds".
+
+  Usage:
+    roslaunch dynasense replay_depth_clouds.launch bag:=/path/to/file.bag
+    roslaunch dynasense replay_depth_clouds.launch bag:=... start:=20 rate:=0.5 loop:=true
+    roslaunch dynasense replay_depth_clouds.launch bag:=... max_rate:=0 decimation:=2   # every frame, 212x120
+    roslaunch dynasense replay_depth_clouds.launch bag:=... pause:=true                  # space in this terminal starts it
+-->
+<launch>
+  <arg name="bag"/>                                <!-- absolute path to the .bag -->
+  <arg name="rate"                 default="1.0"/>
+  <arg name="start"                default="0.0"/> <!-- seconds into the bag -->
+  <arg name="delay"                default="5.0"/> <!-- seconds between advertising and the first message -->
+  <arg name="pause"                default="false"/>
+  <arg name="loop"                 default="false"/>
+  <arg name="quit_when_done"       default="false"/> <!-- shut everything down when the bag ends -->
+  <arg name="rviz"                 default="true"/>
+  <arg name="rviz_config"          default="$(find anymal_d_rsl)/config/ui/config_depth_lidar.rviz"/>
+  <arg name="load_description"     default="true"/>
+  <arg name="description_xacro"    default="$(find anymal_d_rsl)/assets/urdf/anymal_d_rsl.urdf.xacro"/>
+  <arg name="tf_static_aggregator" default="true"/>
+  <arg name="config"               default="$(find dynasense)/config/depth_cameras.yaml"/>
+  <arg name="decimation"           default="1"/>
+  <arg name="max_rate"             default="15.0"/>
+  <arg name="depth_min"            default=""/>    <!-- empty: YAML value -->
+  <arg name="depth_max"            default=""/>    <!-- empty: YAML value -->
+  <arg name="cloud_topic_template" default=""/>    <!-- empty: YAML value -->
+
+  <arg name="pause_flag" value="$(eval '--pause' if arg('pause') else '')"/>
+  <arg name="loop_flag"  value="$(eval '--loop' if arg('loop') else '')"/>
+
+  <param name="use_sim_time" value="true"/>
+
+  <!-- Same xacro the RSL stack turns into anymal_description; RobotModel display only. -->
+  <param name="anymal_description" if="$(arg load_description)"
+         command="$(find xacro)/xacro $(arg description_xacro) simulation:=false bagfile_is_played:=true"/>
+
+  <node pkg="dynasense" type="tf_static_aggregator.py" name="tf_static_aggregator" output="screen"
+        if="$(arg tf_static_aggregator)">
+    <param name="bags" value="$(arg bag)"/>
+  </node>
+
+  <include file="$(find dynasense)/launch/depth_image_to_pointcloud.launch">
+    <arg name="config"               value="$(arg config)"/>
+    <arg name="decimation"           value="$(arg decimation)"/>
+    <arg name="max_rate"             value="$(arg max_rate)"/>
+    <arg name="depth_min"            value="$(arg depth_min)"/>
+    <arg name="depth_max"            value="$(arg depth_max)"/>
+    <arg name="cloud_topic_template" value="$(arg cloud_topic_template)"/>
+  </include>
+
+  <node pkg="rviz" type="rviz" name="depth_rviz" output="screen" if="$(arg rviz)"
+        args="-d $(arg rviz_config) -f odom"/>
+
+  <node pkg="rosbag" type="play" name="rosbag_play" output="screen" required="$(arg quit_when_done)"
+        args="--clock --delay $(arg delay) --rate $(arg rate) --start $(arg start) $(arg pause_flag) $(arg loop_flag) $(arg bag)"/>
+
+</launch>

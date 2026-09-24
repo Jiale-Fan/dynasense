@@ -11,10 +11,15 @@ dynasense/
 ├── src/bps_map.cpp
 ├── src/bps_node.cpp                    # dynasense_bps_node
 ├── src/ground_clearance_plugin.cpp     # Gazebo model plugin, 17 downward rays
+├── src/depth_image_to_pointcloud_node.cpp  # dynasense_depth_image_to_pointcloud_node (bag replay)
 ├── msg/{BpsState,GroundClearance}.msg
 ├── config/bps.yaml
+├── config/depth_cameras.yaml           # intrinsics + topics for the depth converter
 ├── launch/sim_contact_bps.launch       # the whole ContactBPS stack
 ├── launch/sim_bps_sensors_only.launch  # same, minus the learned controller
+├── launch/depth_image_to_pointcloud.launch  # depth converter only
+├── launch/replay_depth_clouds.launch   # bag + TF + depth converter + RViz
+├── scripts/tf_static_aggregator.py     # re-latches the union of /tf_static during bag replay
 └── foot_tof/                           # unrelated: foot ToF ray plugins + preprocessor
 ```
 
@@ -292,6 +297,123 @@ points at the self-hit skipping (raise `<maxSkips>` or `<skipStep>`).
    dark and point them away from the red-orange cubes.
 5. `rostopic echo /dynasense/bps_state` — `num_ray_voxels` should climb as the
    robot approaches an obstacle and stay at 0 on open flat ground.
+
+## Depth image → point cloud (bag replay)
+
+`dynasense_depth_image_to_pointcloud_node` back-projects the six RealSense
+depth images into organized `sensor_msgs/PointCloud2` clouds. It exists because
+the real-robot bags (e.g. `~/Documents/rosbags/23sept/jiale_dynasense_files`)
+carry `/depth_camera_*/depth/image_rect_raw` but **no `camera_info` and no
+point clouds**, so neither the stock `depth_image_proc` pipeline nor the BPS
+node can consume them.
+
+```
+/depth_camera_<side>/depth/image_rect_raw    sensor_msgs/Image  16UC1 mm (also mono16, 32FC1 m), 424x240 @60 Hz
+  -> /depth_camera_<side>/depth/points        sensor_msgs/PointCloud2: organized 240x424, xyz float32,
+                                              NaN = no return / outside [depth_min, depth_max], is_dense false,
+                                              header (stamp, frame_id) copied from the image
+  -> /depth_camera_<side>/depth/camera_info   synthesized sensor_msgs/CameraInfo, same header
+```
+
+Files: `src/depth_image_to_pointcloud_node.cpp`, `config/depth_cameras.yaml`,
+`launch/depth_image_to_pointcloud.launch` (converter only),
+`launch/replay_depth_clouds.launch` (bag + TF + converter + RViz),
+`scripts/tf_static_aggregator.py`, `test/depth_image_to_pointcloud.test`.
+
+### Intrinsics
+
+No calibration is stored offline, so `config/depth_cameras.yaml` uses the
+Gazebo D435 model from
+`anymal_d/urdf/base/sensors/depth_camera/realsense_d435_{face,side}_3_6_0.urdf.xacro`:
+`horizontal_fov 1.50098` rad at 424x240, `Cx = W/2 - 0.5`, `Cy = H/2 - 0.5`,
+`focalLength 0` (Gazebo computes it):
+
+    fx = fy = W / (2 tan(hfov/2)) = 424 / (2 tan(0.75049)) = 227.343 px,  cx = 211.5,  cy = 119.5,  no distortion
+
+These are *simulation* values; a real D435 at this resolution is roughly
+fx ≈ 223, fy ≈ 217, so expect a few percent lateral error at the image border.
+To use the robot's calibration, run
+`rostopic echo -n1 /depth_camera_<side>/depth/camera_info` on the robot and
+paste `P[0] P[5] P[2] P[6]` as `fx fy cx cy` into that camera's entry. When a
+`camera_info` topic *is* being published (live robot, or a bag that has it),
+the node adopts it automatically and stops publishing its synthesized one.
+
+The upside-down mounting of the face cameras is in TF
+(`*_camera -> *_camera_parent` is a 180° roll), so the images are **not**
+flipped before back-projection.
+
+### Run
+
+```bash
+catkin build dynasense
+source devel/setup.bash
+# bag replay with RViz (group "Dynasense Depth Clouds" in anymal_d_rsl/config/ui/config_depth_lidar.rviz):
+roslaunch dynasense replay_depth_clouds.launch bag:=/path/to/2026-09-23-18-30-12.bag
+roslaunch dynasense replay_depth_clouds.launch bag:=... start:=20 rate:=0.5 loop:=true
+roslaunch dynasense replay_depth_clouds.launch bag:=... max_rate:=0 decimation:=2   # every frame, 212x120 points
+# converter only (live robot, or next to anymal_d_rsl/bin/replay.sh):
+roslaunch dynasense depth_image_to_pointcloud.launch
+roslaunch dynasense depth_image_to_pointcloud.launch cloud_topic_template:={ns}/depth/color/points  # stock raw name
+```
+
+`replay_depth_clouds.launch` sets `use_sim_time`, plays the bag with `--clock`
+and `--delay 5`, loads `anymal_description` (the RSL xacro with
+`bagfile_is_played:=true`, for the RobotModel display only; joint TFs and the
+calibrated camera chain come from the bag) and caps the converter at 15 Hz per
+camera (6 × 60 Hz × 1.6 MB would be ~590 MB/s into RViz).
+
+> **`/tf_static` and rosbag play.** The bag holds nine separately latched
+> `/tf_static` messages (anymal_tf_publisher, six RealSense nodelet managers,
+> compslam). `rosbag play` merges them into one publisher, and a latched
+> publisher only re-sends its *last* message, so anything that subscribes after
+> the first milliseconds of playback (a slow RViz start, `tf_echo`, a restarted
+> node) never sees the depth-camera chains and the clouds cannot be placed in
+> `odom`. `scripts/tf_static_aggregator.py` reads the statics from the bag
+> file, merges everything it sees on `/tf_static`, and re-latches the union.
+> The replay launch file starts it; with your own `rosbag play`, run
+> `rosrun dynasense tf_static_aggregator.py _bags:=/path/to.bag`.
+
+### Parameters (`config/depth_cameras.yaml`)
+
+| parameter | default | meaning |
+|---|---|---|
+| `depth_min`, `depth_max` | 0.1, 3.0 m | Gazebo near clip / cloud cutoff; pixels outside become NaN |
+| `decimation` | 1 | pixel stride; the cloud is ⌈W/d⌉×⌈H/d⌉, sampled at u = d·i with the original intrinsics |
+| `max_rate` | 0 | per-camera Hz cap by header stamp (0 = every frame) |
+| `publish_camera_info` | true | synthesized CameraInfo next to each cloud (enables `rviz/DepthCloud`, `depth_image_proc`) |
+| `use_live_camera_info` | true | adopt a `camera_info` published by someone else |
+| `process_without_subscribers` | false | convert even when nobody listens |
+| `image_queue_size`, `tcp_nodelay`, `spinner_threads` | 2, true, 4 | |
+| `depth_unit_m` | 0.001 | metres per 16-bit unit (REP 118) |
+| `*_topic_template` | `{ns}/depth/image_rect_raw`, `{ns}/depth/points`, `{ns}/depth/camera_info` | `{ns}` = the camera's `namespace` |
+| `default_intrinsics` | Gazebo values above | used by entries without their own |
+| `cameras[]` | six entries | `name` (required), `namespace`, optional `image_topic`, `cloud_topic`, `camera_info_topic`, `frame_id`, `fx fy cx cy width height` |
+
+### Verify
+
+```bash
+rostest dynasense depth_image_to_pointcloud.test            # synthetic images: layout, padding, NaNs, decimation, live camera_info
+rostopic hz /depth_camera_front_lower/depth/points -w 30     # 15 Hz (replay default) / 60 Hz (max_rate:=0)
+rostopic echo -n1 --noarr /depth_camera_front_lower/depth/points   # 240x424, x y z, point_step 16, frame *_depth_optical_frame
+rostopic echo -n1 /tf_static | grep -c child_frame_id        # ~105 with the aggregator, 1 without
+rosrun tf tf_echo base depth_camera_front_lower_depth_optical_frame   # t ≈ [0.368 -0.025 -0.060], looking ~60° down
+```
+
+In RViz (fixed frame `odom`) the depth-cloud floor must lie on the
+`/lidar/point_cloud` floor (the lidar needs no intrinsics, so it is the
+reference), and the front-lower returns from the LF foot must sit on the
+rendered LF shank, not RF — a mirrored back-projection would swap them.
+
+### Caveats
+
+- The clouds are **raw**: unlike `/depth_camera_*/point_cloud_self_filtered`,
+  the robot's own legs are still in them. Pointing `dynasense_bps_node` at them
+  (`depth_cloud_topics`) registers the legs as obstacles.
+- Real-robot bags have no `world` frame; the BPS node would need
+  `map_frame: odom` there.
+- Do not add the `replay.yaml` static transform
+  (`*_camera_parent -> *_depth_optical_frame`) on top of these bags: the bag's
+  `/tf_static` already has it, and a second parent breaks the TF tree.
 
 ## foot_tof
 

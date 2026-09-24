@@ -73,6 +73,11 @@ add_dependencies(dynasense_bps_node
   ${catkin_EXPORTED_TARGETS}
 )
 
+# Depth image -> organized PointCloud2 by pinhole back-projection (no cv_bridge).
+add_executable(dynasense_depth_image_to_pointcloud_node src/depth_image_to_pointcloud_node.cpp)
+target_link_libraries(dynasense_depth_image_to_pointcloud_node ${catkin_LIBRARIES})
+add_dependencies(dynasense_depth_image_to_pointcloud_node ${catkin_EXPORTED_TARGETS})
+
 ####################
 ## Gazebo plugins ##
 ####################
@@ -94,9 +99,12 @@ add_dependencies(dynasense_foot_tof_pc_plugin ${catkin_EXPORTED_TARGETS})
 
 if(CATKIN_ENABLE_TESTING)
   find_package(rostest REQUIRED)
-  catkin_install_python(PROGRAMS test/test_frame_alignment.py
+  catkin_install_python(PROGRAMS
+      test/test_frame_alignment.py
+      test/test_depth_image_to_pointcloud.py
     DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
   add_rostest(test/frame_alignment.test DEPENDENCIES dynasense_bps_node)
+  add_rostest(test/depth_image_to_pointcloud.test DEPENDENCIES dynasense_depth_image_to_pointcloud_node)
 endif()
 
 #############
@@ -106,6 +114,7 @@ endif()
 catkin_install_python(
   PROGRAMS
     foot_tof/bin/tof_preprocessor.py
+    scripts/tf_static_aggregator.py
   DESTINATION
     ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
@@ -125,7 +134,9 @@ install(TARGETS
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 )
 
-install(TARGETS dynasense_bps_node
+install(TARGETS
+    dynasense_bps_node
+    dynasense_depth_image_to_pointcloud_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

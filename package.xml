@@ -38,6 +38,11 @@
   <exec_depend>tf2_eigen</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
+  <!-- scripts/tf_static_aggregator.py (bag replay) and the anymal_description
+       loaded by launch/replay_depth_clouds.launch -->
+  <exec_depend>rosbag</exec_depend>
+  <exec_depend>tf2_msgs</exec_depend>
+  <exec_depend>xacro</exec_depend>
   <!-- Only for the optional standalone_rviz node in
        sim_bps_sensors_only.launch. anymal_d_rsl, which both sim launch files
        also reference, is deliberately NOT declared here: it loads this

@@ -1,0 +1,64 @@
+# dynasense_depth_image_to_pointcloud_node
+#
+# Back-projects the six RealSense depth images (sensor_msgs/Image, 16UC1
+# millimetres, 0 = no return) into organized sensor_msgs/PointCloud2 clouds
+# (xyz float32, NaN = invalid, is_dense false) with the same header stamp and
+# frame_id as the image. Launch files: depth_image_to_pointcloud.launch (node
+# only) and replay_depth_clouds.launch (bag + TF + RViz).
+#
+# INTRINSICS
+# The real-robot bags carry no camera_info, so the pinhole model comes from the
+# Gazebo depth sensor of the anymal_d description:
+#   /opt/ros/noetic/share/anymal_d/urdf/base/sensors/depth_camera/realsense_d435_{face,side}_3_6_0.urdf.xacro
+#     <horizontal_fov>1.50098</horizontal_fov>  (86 deg), image 424x240,
+#     Cx = W/2 - 0.5 = 211.5, Cy = H/2 - 0.5 = 119.5, focalLength 0, so Gazebo uses
+#     fx = fy = W / (2 tan(hfov/2)) = 424 / (2 tan(0.75049)) = 227.343 px, zero distortion.
+#   (The xacro's <vertical_fov> is ignored by Gazebo classic; square pixels give
+#   an effective vertical FOV of 55.7 deg.)
+# These are SIMULATION values. A real D435 at 424x240 is roughly fx ~223,
+# fy ~217 (87 x 58 deg), i.e. a few percent lateral error at the image border.
+# To use the robot's calibration, run on the robot
+#   rostopic echo -n1 /depth_camera_<side>/depth/camera_info
+# and paste P[0] P[5] P[2] P[6] (or K[0] K[4] K[2] K[5]) as fx fy cx cy into
+# that camera's entry below. If a camera_info topic IS being published (live
+# robot, or a bag that has it), the node adopts it automatically
+# (use_live_camera_info) and stops publishing its synthesized one.
+#
+# The face cameras are mounted upside down; that is in TF
+# (*_camera -> *_camera_parent is a 180 deg roll), so the images are NOT flipped here.
+
+depth_min: 0.1              # [m] Gazebo <clip><near>; nearer pixels become NaN
+depth_max: 3.0              # [m] Gazebo pointCloudCutoffMax and the stock VoxelGrid limit;
+                            #     raise to ~6.0 to see the far (noisy) range of the real D435
+decimation: 1               # pixel stride; 2 -> 212x120 points per cloud (4x less bandwidth)
+max_rate: 0.0               # [Hz] per camera, 0 = convert every frame (bags: ~60 Hz)
+publish_camera_info: true   # synthesized CameraInfo on {ns}/depth/camera_info (rviz DepthCloud, depth_image_proc)
+use_live_camera_info: true  # adopt a camera_info published by someone else
+process_without_subscribers: false
+image_queue_size: 2
+tcp_nodelay: true
+spinner_threads: 4
+depth_unit_m: 0.001         # metres per 16UC1 / mono16 unit (REP 118: millimetres). 32FC1 is metres.
+
+# {ns} is replaced by each camera's namespace.
+image_topic_template:       "{ns}/depth/image_rect_raw"
+cloud_topic_template:       "{ns}/depth/points"        # stock ANYbotics raw name: "{ns}/depth/color/points"
+camera_info_topic_template: "{ns}/depth/camera_info"
+
+# Used by every camera entry that does not set its own fx fy cx cy width height.
+default_intrinsics: {width: 424, height: 240, fx: 227.343, fy: 227.343, cx: 211.5, cy: 119.5}
+
+cameras:
+  - {name: front_upper, namespace: /depth_camera_front_upper}
+  - {name: front_lower, namespace: /depth_camera_front_lower}
+  - {name: rear_upper,  namespace: /depth_camera_rear_upper}
+  - {name: rear_lower,  namespace: /depth_camera_rear_lower}
+  - {name: left,        namespace: /depth_camera_left}
+  - {name: right,       namespace: /depth_camera_right}
+  # Per-camera overrides (any subset of these keys):
+  # - {name: front_lower, namespace: /depth_camera_front_lower,
+  #    fx: 223.1, fy: 216.9, cx: 212.4, cy: 119.8, width: 424, height: 240,
+  #    image_topic: /depth_camera_front_lower/depth/image_rect_raw,
+  #    cloud_topic: /depth_camera_front_lower/depth/points,
+  #    camera_info_topic: /depth_camera_front_lower/depth/camera_info,
+  #    frame_id: depth_camera_front_lower_depth_optical_frame}   # replaces the image header's frame_id

@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<!--
+  Depth image -> organized PointCloud2 for the six RealSense depth cameras.
+
+  Back-projects /depth_camera_<side>/depth/image_rect_raw (16UC1 mm) into
+  /depth_camera_<side>/depth/points with the pinhole intrinsics from
+  config/depth_cameras.yaml (the Gazebo D435 model by default; a
+  /depth_camera_<side>/depth/camera_info that is being published, e.g. on the
+  real robot, overrides them automatically). Works on a live robot, next to
+  anymal_d_rsl/bin/replay.sh, or from replay_depth_clouds.launch.
+
+  Args default EMPTY so that the YAML governs; pass a value to override it for
+  one run (the same pattern as ground_z in sim_bps_sensors_only.launch).
+
+  Usage:
+    roslaunch dynasense depth_image_to_pointcloud.launch
+    roslaunch dynasense depth_image_to_pointcloud.launch decimation:=2 max_rate:=15
+    roslaunch dynasense depth_image_to_pointcloud.launch cloud_topic_template:={ns}/depth/color/points
+-->
+<launch>
+  <arg name="config"               default="$(find dynasense)/config/depth_cameras.yaml"/>
+  <arg name="node_name"            default="depth_image_to_pointcloud"/>
+  <arg name="decimation"           default=""/>   <!-- int, pixel stride -->
+  <arg name="max_rate"             default=""/>   <!-- Hz per camera, 0 = every frame -->
+  <arg name="depth_min"            default=""/>   <!-- m -->
+  <arg name="depth_max"            default=""/>   <!-- m -->
+  <arg name="cloud_topic_template" default=""/>   <!-- e.g. {ns}/depth/color/points -->
+  <arg name="publish_camera_info"  default=""/>   <!-- bool -->
+
+  <node pkg="dynasense" type="dynasense_depth_image_to_pointcloud_node" name="$(arg node_name)" output="screen">
+    <rosparam command="load" file="$(arg config)"/>
+    <param name="decimation"           type="int"    value="$(arg decimation)"
+           if="$(eval arg('decimation') != '')"/>
+    <param name="max_rate"             type="double" value="$(arg max_rate)"
+           if="$(eval arg('max_rate') != '')"/>
+    <param name="depth_min"            type="double" value="$(arg depth_min)"
+           if="$(eval arg('depth_min') != '')"/>
+    <param name="depth_max"            type="double" value="$(arg depth_max)"
+           if="$(eval arg('depth_max') != '')"/>
+    <param name="cloud_topic_template" type="str"    value="$(arg cloud_topic_template)"
+           if="$(eval arg('cloud_topic_template') != '')"/>
+    <param name="publish_camera_info"  type="bool"   value="$(arg publish_camera_info)"
+           if="$(eval arg('publish_camera_info') != '')"/>
+  </node>
+
+</launch>
