@@ -21,6 +21,7 @@
   <build_depend>tf</build_depend>
   <build_depend>tf2_eigen</build_depend>
   <build_depend>tf2_ros</build_depend>
+  <build_depend>urdf</build_depend>
   <build_depend>eigen</build_depend>
   <build_depend>visualization_msgs</build_depend>
 
@@ -37,7 +38,11 @@
   <exec_depend>tf</exec_depend>
   <exec_depend>tf2_eigen</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>urdf</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
+  <!-- launch/replay_wavemap.launch (both packages live in this workspace) -->
+  <exec_depend>wavemap_ros</exec_depend>
+  <exec_depend>wavemap_rviz_plugin</exec_depend>
   <!-- scripts/tf_static_aggregator.py (bag replay) and the anymal_description
        loaded by launch/replay_depth_clouds.launch -->
   <exec_depend>rosbag</exec_depend>

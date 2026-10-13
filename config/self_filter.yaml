@@ -1,0 +1,42 @@
+# dynasense_self_filter_node
+#
+# Removes the robot's own body from point clouds and optionally clips them to a
+# range band about the sensor. The body is the set of <collision> primitives of
+# the URDF (anymal_d: 42 boxes/cylinders/spheres on 22 links, no meshes),
+# placed with TF at the cloud's header stamp. A point is dropped when its
+# Euclidean distance to any primitive is <= body_margin + link_padding[link]
+# (0 inside a primitive). Output: unorganized xyz float32 PointCloud2
+# (point_step 16) with the input's header stamp and frame_id.
+#
+# body_margin is measured from the COLLISION surface. The visual shells stick
+# out up to ~4.2 cm beyond the collision shapes on base and lidar (1-2 cm on
+# the legs); use link_padding to grow individual links if that matters.
+
+robot_description_param: anymal_description   # parameter holding the URDF (searched upward from the node namespace)
+body_margin: 0.05            # [m] from the collision primitives
+link_padding: {}             # [m] extra per link, e.g. {base: 0.04, lidar: 0.04} to reach the visual shells
+links_ignore: []             # link names whose collision geometry is not used
+max_range: 0.8               # [m] from the sensor origin; 0 = no far clipping
+min_range: 0.0               # [m]
+keep_organized: false        # true: keep height x width and write NaN for removed points
+tf_timeout: 0.05             # [s] wait per link transform at the cloud stamp before dropping the cloud
+tf_fallback_latest: false    # true: use the latest TF for a link missing at the stamp instead of dropping the cloud
+publish_empty: false         # publish clouds with 0 remaining points (wavemap warns on every empty cloud)
+process_without_subscribers: false
+queue_size: 2
+tcp_nodelay: true
+spinner_threads: 4
+marker_rate: 2.0             # [Hz] ~body_markers (padded primitives), only when subscribed; 0 = off
+stats_period: 10.0           # [s] per-input statistics in the log; a summary is printed at shutdown
+output_topic_suffix: _self_filtered   # output_topic default = topic + suffix
+
+# enabled_inputs: "front_upper front_lower lidar"   # optional; when set it REPLACES the enabled flags below
+inputs:
+  - {name: front_upper, topic: /depth_camera_front_upper/depth/points, enabled: true}
+  - {name: front_lower, topic: /depth_camera_front_lower/depth/points, enabled: true}
+  - {name: rear_upper,  topic: /depth_camera_rear_upper/depth/points,  enabled: true}
+  - {name: rear_lower,  topic: /depth_camera_rear_lower/depth/points,  enabled: true}
+  - {name: left,        topic: /depth_camera_left/depth/points,        enabled: true}
+  - {name: right,       topic: /depth_camera_right/depth/points,       enabled: true}
+  - {name: lidar,       topic: /lidar/point_cloud,                     enabled: true}
+  # optional per-input keys: output_topic, max_range, min_range (override the globals)

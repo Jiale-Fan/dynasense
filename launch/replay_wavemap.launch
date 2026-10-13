@@ -1,0 +1,124 @@
+<?xml version="1.0"?>
+<!--
+  Replay a real-robot bag and build a wavemap voxel map from the depth cameras
+  and/or the lidar, with the robot's own body removed from the clouds.
+
+  Pipeline (see README "Self filter + wavemap replay"):
+    replay_depth_clouds.launch (sim time, anymal_description, tf_static
+    aggregator, depth image -> cloud converter, rosbag play)
+      -> dynasense_self_filter_node: drops points within body_margin of the
+         URDF collision primitives, beyond max_range from the sensor, and NaNs;
+         only the selected sensors are subscribed
+      -> wavemap_ros/ros_server on the *_self_filtered clouds
+      -> RViz (config_wavemap.rviz: voxel map, filtered clouds, body hull)
+
+  Usage:
+    roslaunch dynasense replay_wavemap.launch                                   # default bag, all sensors, 0.8 m, 5 cm voxels
+    roslaunch dynasense replay_wavemap.launch depth_cameras:="front_lower rear_lower" use_lidar:=false
+    roslaunch dynasense replay_wavemap.launch max_range:=0 min_cell_width:=0.03 # no far clipping, finer map
+    roslaunch dynasense replay_wavemap.launch start:=15 duration:=60 rviz:=false quit_when_done:=true
+    rosservice call /wavemap/map_request_full   # RViz started late: request the whole map once
+
+  Notes:
+    - wavemap publishes only the blocks that changed since the last publish;
+      RViz must be up before the first integration (delay 5 s) or use the service above.
+    - wavemap's max_range follows max_range; with max_range:=0 it is 5 m. To keep
+      far returns for free-space carving but still map only the near field, use
+      max_range:=0 wavemap_max_range:=0.8.
+    - Occupied voxels right in front of a camera lens mean depth_min_range is not
+      above 6 x depth_range_sigma (see the derived args below).
+    - RViz map display with a red cross and no Topic property: the shell's
+      ROS_PACKAGE_PATH predates the wavemap build. Re-source devel/setup.bash
+      and check that "rospack plugins" (attribute "plugin", package "rviz")
+      lists wavemap_rviz_plugin; see the README troubleshooting note.
+-->
+<launch>
+  <!-- bag replay -->
+  <arg name="bag"            default="/home/tianaoxu/Documents/rosbags/23sept/jiale_dynasense_files/2026-09-23-18-25-44.bag"/>
+  <arg name="rate"           default="1.0"/>
+  <arg name="start"          default="0.0"/>   <!-- seconds into the bag -->
+  <arg name="duration"       default=""/>      <!-- seconds to play; empty = to the end -->
+  <arg name="delay"          default="5.0"/>   <!-- seconds between advertising and the first message -->
+  <arg name="pause"          default="false"/>
+  <arg name="loop"           default="false"/>
+  <arg name="quit_when_done" default="false"/>
+  <arg name="decimation"     default="1"/>     <!-- converter pixel stride -->
+  <arg name="depth_rate"     default="15.0"/>  <!-- converter cap per camera [Hz], 0 = every frame -->
+  <arg name="depth_config"   default="$(find dynasense)/config/depth_cameras.yaml"/> <!-- converter YAML (cameras, topics, intrinsics) -->
+  <!-- pinhole model wavemap reprojects the depth clouds with; must match the converter's intrinsics -->
+  <arg name="depth_fx"       default="227.343"/>
+  <arg name="depth_fy"       default="227.343"/>
+  <arg name="depth_cx"       default="211.5"/>
+  <arg name="depth_cy"       default="119.5"/>
+
+  <!-- sensor selection -->
+  <arg name="depth_cameras"  default="front_upper front_lower rear_upper rear_lower left right"/> <!-- space/comma separated; "" = none -->
+  <arg name="use_lidar"      default="true"/>
+
+  <!-- self filter -->
+  <arg name="body_margin"    default="0.05"/>  <!-- m from the collision primitives (+ link_padding from the YAML) -->
+  <arg name="max_range"      default="0.8"/>   <!-- m from the sensor origin, 0 = no clipping -->
+  <arg name="filter_config"  default="$(find dynasense)/config/self_filter.yaml"/>
+
+  <!-- wavemap -->
+  <arg name="wavemap"           default="true"/>
+  <arg name="wavemap_config"    default="$(find dynasense)/config/wavemap_replay.yaml"/>
+  <arg name="world_frame"       default="odom"/>
+  <arg name="min_cell_width"    default="0.05"/>
+  <arg name="wavemap_max_range" default=""/>     <!-- m; empty = max_range (5 m when max_range is 0) -->
+  <arg name="depth_min_range"   default="0.2"/>  <!-- m; keep above 6 x depth_range_sigma (see config/wavemap_replay.yaml) -->
+  <arg name="lidar_min_range"   default="0.5"/>  <!-- m; same rule with lidar_range_sigma -->
+  <arg name="wavemap_threads"   default="8"/>
+  <arg name="depth_time_offset" default="0.0"/>
+  <arg name="lidar_time_offset" default="0.05"/>  <!-- lidar stamp = scan start; mid scan -->
+
+  <!-- RViz -->
+  <arg name="rviz"           default="true"/>
+  <arg name="rviz_config"    default="$(find anymal_d_rsl)/config/ui/config_wavemap.rviz"/>
+
+  <!-- derived ($(eval) has no max()/min(); each eval must be the whole attribute).
+       range_sigma = max(min_cell_width / 2, sensor noise), capped so that
+       6 * range_sigma stays below min_range: wavemap gives every pixel WITHOUT a
+       return (NaN, filtered body, clipped far point) a range of 0, and the
+       continuous-ray model then marks cells up to 6 sigma in front of the sensor
+       as occupied unless min_range excludes them. -->
+  <arg name="wavemap_max_range_eff" value="$(eval float(arg('wavemap_max_range')) if str(arg('wavemap_max_range')) != '' else (float(arg('max_range')) if float(arg('max_range')) > 0 else 5.0))"/>
+  <arg name="depth_sigma_cell"  value="$(eval float(arg('min_cell_width')) / 2 if float(arg('min_cell_width')) / 2 > 0.01 else 0.01)"/>
+  <arg name="depth_sigma_cap"   value="$(eval float(arg('depth_min_range')) / 6 - 0.005)"/>
+  <arg name="depth_range_sigma" value="$(eval float(arg('depth_sigma_cell')) if float(arg('depth_sigma_cap')) > float(arg('depth_sigma_cell')) else float(arg('depth_sigma_cap')))"/>
+  <arg name="lidar_sigma_cell"  value="$(eval float(arg('min_cell_width')) / 2 if float(arg('min_cell_width')) / 2 > 0.03 else 0.03)"/>
+  <arg name="lidar_sigma_cap"   value="$(eval float(arg('lidar_min_range')) / 6 - 0.005)"/>
+  <arg name="lidar_range_sigma" value="$(eval float(arg('lidar_sigma_cell')) if float(arg('lidar_sigma_cap')) > float(arg('lidar_sigma_cell')) else float(arg('lidar_sigma_cap')))"/>
+  <arg name="enabled_inputs"    value="$(eval str(arg('depth_cameras')) + (' lidar' if arg('use_lidar') else ''))"/>
+
+  <include file="$(find dynasense)/launch/replay_depth_clouds.launch">
+    <arg name="bag"              value="$(arg bag)"/>
+    <arg name="rate"             value="$(arg rate)"/>
+    <arg name="start"            value="$(arg start)"/>
+    <arg name="duration"         value="$(arg duration)"/>
+    <arg name="delay"            value="$(arg delay)"/>
+    <arg name="pause"            value="$(arg pause)"/>
+    <arg name="loop"             value="$(arg loop)"/>
+    <arg name="quit_when_done"   value="$(arg quit_when_done)"/>
+    <arg name="decimation"       value="$(arg decimation)"/>
+    <arg name="config"           value="$(arg depth_config)"/>
+    <arg name="max_rate"         value="$(arg depth_rate)"/>
+    <arg name="rviz"             value="false"/>
+    <arg name="load_description" value="true"/>   <!-- the self filter parses anymal_description -->
+  </include>
+
+  <node pkg="dynasense" type="dynasense_self_filter_node" name="self_filter" output="screen">
+    <rosparam command="load" file="$(arg filter_config)"/>
+    <param name="body_margin"    type="double" value="$(arg body_margin)"/>
+    <param name="max_range"      type="double" value="$(arg max_range)"/>
+    <param name="enabled_inputs" type="str"    value="$(arg enabled_inputs)"/>
+  </node>
+
+  <node pkg="wavemap_ros" type="ros_server" name="wavemap" output="screen" if="$(arg wavemap)">
+    <rosparam file="$(arg wavemap_config)" subst_value="true"/>
+  </node>
+
+  <node pkg="rviz" type="rviz" name="wavemap_rviz" output="screen" if="$(arg rviz)"
+        args="-d $(arg rviz_config) -f $(arg world_frame)"/>
+
+</launch>

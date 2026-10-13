@@ -59,14 +59,14 @@ robot_model_name: anymal
 # enable_contact_voxels: true    # physical THIGH/SHANK contacts
 # enable_ray_voxels: true        # external depth-camera and lidar hits
 
-enable_contact_voxels: true   
-enable_ray_voxels: false        
+enable_contact_voxels: true
+enable_ray_voxels: true
 
 # --- voxel map -------------------------------------------------------------
 voxel_size: 0.05
 max_query_distance: 0.5
 contact_buffer_capacity: 200
-ray_buffer_capacity: 500
+ray_buffer_capacity: 2000
 
 # Height band a voxel centre must fall in to be buffered, relative to ground_z.
 # Reproduces the training grid's z extent of [-0.2, 1.8) combined with its
@@ -119,8 +119,11 @@ contact_frame_debug_count: 10
 
 # --- external rays ---------------------------------------------------------
 # Self-filtered clouds: the ANYbotics point-cloud self-filter has already
-# removed robot-body returns, so what arrives is obstacle hits plus ground
-# (the ground is then dropped by the min_height_above_ground gate).
+# removed robot-body returns from the camera clouds, so what arrives is
+# obstacle hits plus ground (the ground is then dropped by the
+# min_height_above_ground gate). The lidar driver's /lidar/point_cloud is NOT
+# body-filtered; sim_contact_bps.launch runs dynasense_self_filter_node on it
+# (URDF collision primitives + 5 cm margin) and lidar_topic reads its output.
 depth_cloud_topics:
   - /depth_camera_front_upper/point_cloud_self_filtered
   - /depth_camera_front_lower/point_cloud_self_filtered
@@ -138,10 +141,11 @@ camera_optical_frame: true
 ray_max_range: 1.0
 
 use_lidar: true
-lidar_topic: /lidar/point_cloud
+lidar_topic: /lidar/point_cloud_self_filtered   # from sim_contact_bps.launch's lidar_self_filter; raw: /lidar/point_cloud
 lidar_channels: 5
 lidar_hfov_min_deg: -160.0
 lidar_hfov_max_deg: 160.0
-lidar_vfov_min_deg: 0.0
+lidar_vfov_min_deg: -15.0
+# lidar_vfov_min_deg: 0.0
 lidar_vfov_max_deg: 15.0
 lidar_horizontal_resolution_deg: 30.0

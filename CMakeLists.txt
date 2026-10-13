@@ -15,6 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
   tf
   tf2_eigen
   tf2_ros
+  urdf
   visualization_msgs
   gazebo_ros
 )
@@ -39,7 +40,7 @@ catkin_package(
   LIBRARIES dynasense_bps_map
   CATKIN_DEPENDS
     gazebo_msgs geometry_msgs message_runtime roscpp rospy sensor_msgs std_msgs std_srvs
-    tf tf2_eigen tf2_ros visualization_msgs gazebo_ros
+    tf tf2_eigen tf2_ros urdf visualization_msgs gazebo_ros
   DEPENDS EIGEN3
 )
 
@@ -78,6 +79,11 @@ add_executable(dynasense_depth_image_to_pointcloud_node src/depth_image_to_point
 target_link_libraries(dynasense_depth_image_to_pointcloud_node ${catkin_LIBRARIES})
 add_dependencies(dynasense_depth_image_to_pointcloud_node ${catkin_EXPORTED_TARGETS})
 
+# Robot self filter: drops points near the URDF collision primitives (placed with TF) and outside a range band.
+add_executable(dynasense_self_filter_node src/self_filter_node.cpp)
+target_link_libraries(dynasense_self_filter_node ${catkin_LIBRARIES})
+add_dependencies(dynasense_self_filter_node ${catkin_EXPORTED_TARGETS})
+
 ####################
 ## Gazebo plugins ##
 ####################
@@ -102,9 +108,11 @@ if(CATKIN_ENABLE_TESTING)
   catkin_install_python(PROGRAMS
       test/test_frame_alignment.py
       test/test_depth_image_to_pointcloud.py
+      test/test_self_filter.py
     DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
   add_rostest(test/frame_alignment.test DEPENDENCIES dynasense_bps_node)
   add_rostest(test/depth_image_to_pointcloud.test DEPENDENCIES dynasense_depth_image_to_pointcloud_node)
+  add_rostest(test/self_filter.test DEPENDENCIES dynasense_self_filter_node)
 endif()
 
 #############
@@ -137,6 +145,7 @@ install(TARGETS
 install(TARGETS
     dynasense_bps_node
     dynasense_depth_image_to_pointcloud_node
+    dynasense_self_filter_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

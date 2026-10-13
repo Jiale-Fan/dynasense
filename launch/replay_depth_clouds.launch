@@ -37,6 +37,7 @@
   <arg name="bag"/>                                <!-- absolute path to the .bag -->
   <arg name="rate"                 default="1.0"/>
   <arg name="start"                default="0.0"/> <!-- seconds into the bag -->
+  <arg name="duration"             default=""/>    <!-- seconds to play; empty = to the end -->
   <arg name="delay"                default="5.0"/> <!-- seconds between advertising and the first message -->
   <arg name="pause"                default="false"/>
   <arg name="loop"                 default="false"/>
@@ -55,6 +56,7 @@
 
   <arg name="pause_flag" value="$(eval '--pause' if arg('pause') else '')"/>
   <arg name="loop_flag"  value="$(eval '--loop' if arg('loop') else '')"/>
+  <arg name="duration_flag" value="$(eval ('--duration ' + str(arg('duration'))) if str(arg('duration')) != '' else '')"/>
 
   <param name="use_sim_time" value="true"/>
 
@@ -80,6 +82,6 @@
         args="-d $(arg rviz_config) -f odom"/>
 
   <node pkg="rosbag" type="play" name="rosbag_play" output="screen" required="$(arg quit_when_done)"
-        args="--clock --delay $(arg delay) --rate $(arg rate) --start $(arg start) $(arg pause_flag) $(arg loop_flag) $(arg bag)"/>
+        args="--clock --delay $(arg delay) --rate $(arg rate) --start $(arg start) $(arg duration_flag) $(arg pause_flag) $(arg loop_flag) $(arg bag)"/>
 
 </launch>

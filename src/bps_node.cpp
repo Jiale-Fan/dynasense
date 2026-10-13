@@ -287,7 +287,7 @@ class BpsNode {
       raySources_.push_back(source);
     }
 
-    // Lidar: 5 channels, vertical FOV [0,15] deg, horizontal FOV [-160,160] deg
+    // Lidar: 5 channels, vertical FOV [-15,15] deg, horizontal FOV [-160,160] deg
     // at 30 deg resolution. The simulated Velodyne is a different beam layout,
     // so this bins whatever arrives onto the trained grid.
     bool useLidar = true;
@@ -295,7 +295,7 @@ class BpsNode {
     int lidarRows = 5;
     double lidarHMinDeg = -160.0;
     double lidarHMaxDeg = 160.0;
-    double lidarVMinDeg = 0.0;
+    double lidarVMinDeg = -15.0;
     double lidarVMaxDeg = 15.0;
     double lidarResDeg = 30.0;
     pnh_.param<bool>("use_lidar", useLidar, useLidar);

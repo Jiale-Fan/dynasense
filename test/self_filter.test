@@ -1,0 +1,39 @@
+<launch>
+  <!-- Synthetic robot (box, cylinder, sphere) placed by static TF; no bag, no
+       Gazebo. Two filter instances share the test clouds: per-entry enabled
+       flags with range clipping, and an enabled_inputs override that keeps
+       the clouds organized without clipping. -->
+  <param name="test_description" textfile="$(find dynasense)/test/self_filter_robot.urdf"/>
+  <!-- x y z yaw pitch roll parent child -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="tf_base_ball"   args="0.5 0 0 0 0 0 base ball"/>
+  <node pkg="tf2_ros" type="static_transform_publisher" name="tf_base_sensor" args="0 0 1.0 0 0 0 base sensor"/>
+
+  <node pkg="dynasense" type="dynasense_self_filter_node" name="sf_list" output="screen">
+    <rosparam command="load" file="$(find dynasense)/config/self_filter.yaml"/>
+    <param name="robot_description_param" value="test_description"/>
+    <param name="body_margin" value="0.05"/>
+    <rosparam param="link_padding">{}</rosparam>
+    <param name="max_range" value="2.0"/>
+    <param name="process_without_subscribers" value="true"/>
+    <param name="publish_empty" value="true"/>
+    <param name="stats_period" value="2.0"/>
+    <rosparam param="inputs">[{name: a, topic: /sf_test/a, output_topic: /sf_test/a_filtered},
+                              {name: b, topic: /sf_test/b, enabled: false},
+                              {name: c, topic: /sf_test/c}]</rosparam>
+  </node>
+
+  <node pkg="dynasense" type="dynasense_self_filter_node" name="sf_override" output="screen">
+    <rosparam command="load" file="$(find dynasense)/config/self_filter.yaml"/>
+    <param name="robot_description_param" value="test_description"/>
+    <param name="body_margin" value="0.05"/>
+    <rosparam param="link_padding">{}</rosparam>
+    <param name="max_range" value="0.0"/>
+    <param name="keep_organized" value="true"/>
+    <param name="process_without_subscribers" value="true"/>
+    <param name="enabled_inputs" value="c"/>
+    <rosparam param="inputs">[{name: a, topic: /sf_test/a, output_topic: /sf_test/o_a},
+                              {name: c, topic: /sf_test/c, output_topic: /sf_test/o_c}]</rosparam>
+  </node>
+
+  <test test-name="self_filter" pkg="dynasense" type="test_self_filter.py" time-limit="120"/>
+</launch>

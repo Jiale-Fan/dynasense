@@ -12,13 +12,17 @@ dynasense/
 ├── src/bps_node.cpp                    # dynasense_bps_node
 ├── src/ground_clearance_plugin.cpp     # Gazebo model plugin, 17 downward rays
 ├── src/depth_image_to_pointcloud_node.cpp  # dynasense_depth_image_to_pointcloud_node (bag replay)
+├── src/self_filter_node.cpp            # dynasense_self_filter_node: robot body + range filter for clouds
 ├── msg/{BpsState,GroundClearance}.msg
 ├── config/bps.yaml
 ├── config/depth_cameras.yaml           # intrinsics + topics for the depth converter
+├── config/self_filter.yaml             # self filter: margin, range band, inputs
+├── config/wavemap_replay.yaml          # wavemap server template ($(arg ...) substituted by the launch file)
 ├── launch/sim_contact_bps.launch       # the whole ContactBPS stack
 ├── launch/sim_bps_sensors_only.launch  # same, minus the learned controller
 ├── launch/depth_image_to_pointcloud.launch  # depth converter only
 ├── launch/replay_depth_clouds.launch   # bag + TF + depth converter + RViz
+├── launch/replay_wavemap.launch        # bag + depth converter + self filter + wavemap + RViz
 ├── scripts/tf_static_aggregator.py     # re-latches the union of /tf_static during bag replay
 └── foot_tof/                           # unrelated: foot ToF ray plugins + preprocessor
 ```
@@ -153,9 +157,12 @@ yellow pointing in arbitrary directions. `num_contact_voxels` and
 
 - **Physical contacts** — the strongest non-self contact patch on each THIGH and
   SHANK, force `> 1 N`, **rising edge only**, voxelised into a 200-entry LRU.
-- **External rays** — the six self-filtered depth clouds and the lidar cloud,
+- **External rays** — the six self-filtered depth clouds and the lidar cloud
+  (body-filtered by a `dynasense_self_filter_node` instance that
+  `sim_contact_bps.launch` runs for the lidar only, `lidar_self_filter:=false`
+  feeds the raw `/lidar/point_cloud`),
   binned onto the trained ray grids (`24x16` at FOV `86.62 x 59.73` deg per
-  camera; 5 channels over vFOV `[0,15]` deg at 30 deg horizontal resolution for
+  camera; 5 channels over vFOV `[-15,15]` deg at 30 deg horizontal resolution for
   the lidar), nearest hit per cell, range `<= 1.0 m`, into a 500-entry LRU.
 
 Both buffers deduplicate and evict least-recently-touched voxels. Querying a
@@ -408,12 +415,150 @@ rendered LF shank, not RF — a mirrored back-projection would swap them.
 
 - The clouds are **raw**: unlike `/depth_camera_*/point_cloud_self_filtered`,
   the robot's own legs are still in them. Pointing `dynasense_bps_node` at them
-  (`depth_cloud_topics`) registers the legs as obstacles.
+  (`depth_cloud_topics`) registers the legs as obstacles; use the
+  `*_self_filtered` clouds of `dynasense_self_filter_node` (next section) instead.
 - Real-robot bags have no `world` frame; the BPS node would need
   `map_frame: odom` there.
 - Do not add the `replay.yaml` static transform
   (`*_camera_parent -> *_depth_optical_frame`) on top of these bags: the bag's
   `/tf_static` already has it, and a second parent breaks the TF tree.
+
+## Self filter + wavemap replay (bag)
+
+`launch/replay_wavemap.launch` replays a real-robot bag and builds a wavemap
+voxel map from the depth cameras and/or the lidar while the robot's own body is
+removed from the clouds:
+
+```
+replay_depth_clouds.launch  (sim time, anymal_description, tf_static aggregator, depth converter, rosbag play)
+  /depth_camera_<side>/depth/points (organized xyz)   /lidar/point_cloud   /tf /tf_static
+dynasense_self_filter_node                            URDF collision primitives + TF(cloud frame <- link @ stamp)
+  drop: NaN | range > max_range (0 = off) | range < min_range | dist(collision) <= body_margin + link_padding[link]
+  -> /depth_camera_<side>/depth/points_self_filtered, /lidar/point_cloud_self_filtered   (unorganized xyz, same header)
+  -> /self_filter/body_markers                                                          (padded primitives, RViz)
+wavemap_ros/ros_server  (config/wavemap_replay.yaml)  -> /wavemap/map, /wavemap/obstacle_pointcloud
+rviz -d anymal_d_rsl/config/ui/config_wavemap.rviz -f odom
+```
+
+### Run
+
+```bash
+catkin build dynasense
+source devel/setup.bash
+roslaunch dynasense replay_wavemap.launch                     # 2026-09-23-18-25-44.bag, all 6 cameras + lidar, 0.8 m, 5 cm voxels
+roslaunch dynasense replay_wavemap.launch depth_cameras:="front_lower rear_lower" use_lidar:=false
+roslaunch dynasense replay_wavemap.launch max_range:=0 min_cell_width:=0.03 body_margin:=0.08
+roslaunch dynasense replay_wavemap.launch start:=15 duration:=60 rate:=0.5
+roslaunch dynasense replay_wavemap.launch rviz:=false quit_when_done:=true    # headless
+rosservice call /wavemap/map_request_full                     # RViz started after mapping began: fetch the whole map
+```
+
+| arg | default | meaning |
+|---|---|---|
+| `bag`, `rate`, `start`, `duration`, `delay`, `pause`, `loop`, `quit_when_done` | 18-25-44 bag, 1.0, 0, "", 5 s, false, false, false | rosbag play |
+| `depth_cameras` | all six | space/comma separated camera names; `""` = none |
+| `use_lidar` | true | |
+| `body_margin` | 0.05 m | distance to the collision primitives below which points are removed |
+| `max_range` | 0.8 m | far clip about the sensor origin, `0` = off (wavemap then integrates to 5 m) |
+| `min_cell_width` | 0.05 m | wavemap voxel size |
+| `wavemap_max_range` | = `max_range` | integrator far limit; set it separately (e.g. `max_range:=0 wavemap_max_range:=0.8`) to keep far returns for free-space carving |
+| `depth_min_range`, `lidar_min_range` | 0.2 m, 0.5 m | integrator near limits; must exceed 6 x the range sigma (derived and capped by the launch file) |
+| `world_frame` | odom | wavemap map frame (the bag has no `world`) |
+| `depth_rate`, `decimation` | 15 Hz, 1 | depth converter cap and pixel stride |
+| `depth_config` | `config/depth_cameras.yaml` | converter YAML (cameras, topics, intrinsics); `fast_stereo_ros` passes its stereo variant |
+| `depth_fx`, `depth_fy`, `depth_cx`, `depth_cy` | Gazebo D435 values | pinhole model wavemap reprojects the depth clouds with; must match the converter's intrinsics (real values: `infra1/camera_info`) |
+| `wavemap_threads`, `depth_time_offset`, `lidar_time_offset` | 8, 0, 0.05 s | wavemap tuning |
+| `rviz`, `rviz_config` | true, `config_wavemap.rviz` | |
+
+### Self filter (`dynasense_self_filter_node`, `config/self_filter.yaml`)
+
+- The body is every `<collision>` box, cylinder and sphere of the URDF in
+  `robot_description_param` (`anymal_description`: 42 primitives on 22 links,
+  no meshes). Each link is placed with TF at the cloud's header stamp; a point
+  is dropped when its exact Euclidean distance to any primitive is at most
+  `body_margin + link_padding[link]` (0 inside). A per-link bounding sphere
+  rejects far points cheaply.
+- `body_margin` is measured from the **collision** surface. The visual shells
+  protrude up to ~4.2 cm beyond the collision shapes on `base` and `lidar` and
+  1-2 cm on the legs; add `link_padding: {base: 0.04, lidar: 0.04}` if the
+  visual surface should count. The foot sphere plus margin also removes a
+  ~8 cm disc of floor under each foot.
+- Range band: `min_range < |p| <= max_range` about the sensor origin (the cloud
+  frame origin); `max_range: 0` disables the far clip.
+- TF: if a link transform is not available within `tf_timeout` the cloud is
+  dropped (never published unfiltered); `tf_fallback_latest: true` uses the
+  latest transform instead.
+- Output: unorganized `x y z` float32, point_step 16, same header stamp and
+  `frame_id` (`keep_organized: true` keeps the layout and writes NaN). Empty
+  clouds are not published unless `publish_empty: true`.
+- Sensor selection: `inputs[].enabled`, or the `enabled_inputs` name list which
+  replaces those flags (the launch file builds it from `depth_cameras` and
+  `use_lidar`). Disabled inputs are not subscribed, so the depth converter also
+  stops converting those cameras.
+- `~body_markers`: the padded primitives as a MarkerArray in their link frames
+  (padded boxes are drawn with sharp corners; the true hull has rounded edges).
+- Statistics: every `stats_period` seconds one line per input with clouds,
+  points per cloud, kept / NaN / range / body percentages and ms per cloud
+  split into TF, filter and publish time; a summary table is printed at
+  shutdown.
+
+### wavemap
+
+- `config/wavemap_replay.yaml` is loaded with `subst_value="true"`, so the
+  launch args fill `world_frame`, `min_cell_width`, `wavemap_max_range`,
+  `depth_min_range`/`lidar_min_range`, `depth_range_sigma`/`lidar_range_sigma`
+  (= max(cell/2, 1 cm / 3 cm), capped below min_range/6), `wavemap_threads` and
+  the time offsets.
+- **Occupied voxels right in front of a sensor** are a wavemap artefact, not
+  filter output: a pixel without a return (NaN, a self-filtered body point, a
+  point clipped by `max_range`) keeps range 0 in wavemap's range image, and the
+  continuous-ray model then raises the occupancy of cells closer than
+  6 x `range_sigma` on every frame. Only the integrator's `min_range` excludes
+  them, hence `min_range > 6 x range_sigma` (the launch file enforces it).
+  With the old defaults (min_range 0.1 m, sigma 0.025 m) this produced a shell
+  of voxels at 0.10-0.15 m from every camera. Six `pinhole_camera_projector`
+  integrators use the converter's intrinsics (keep them identical to
+  `config/depth_cameras.yaml`, wavemap reprojects the points); the VLP-16 uses a
+  `spherical_projector` with 16 x 1800 cells. Map type `hashed_wavelet_octree`
+  (the RViz plugin renders surfaces only for that type).
+- All seven inputs are always listed; a deselected sensor never publishes.
+- The map is published incrementally (`/wavemap/map`, changed blocks only,
+  every 0.5 s): start RViz before mapping begins (`delay:=8` on a slow machine)
+  or call `/wavemap/map_request_full`. `/wavemap/obstacle_pointcloud` carries
+  the occupied cells as a PointCloud2.
+- Not covered: per-point lidar motion compensation (wavemap 2.0.1 undistorts
+  only Ouster clouds), so a scan smears by up to ~5 cm at 0.5 m/s; the camera
+  intrinsics are the Gazebo values (see the depth section).
+- **RViz shows the map display with a red cross and no properties (no Topic
+  field):** RViz could not load `wavemap_rviz_plugin/WavemapMap` because the
+  shell that started it has a `ROS_PACKAGE_PATH` from before the wavemap
+  packages were built (the display placeholder then has no properties). Check
+  with `rospack plugins --attrib=plugin rviz | grep wavemap` in that shell; if
+  it prints nothing, `source ~/catkin_ws/devel/setup.bash` again in that
+  terminal (or open a new one) and restart RViz. The error is also logged in
+  `~/.ros/log/latest/rosout.log` as "PluginlibFactory: The plugin for class
+  'wavemap_rviz_plugin/WavemapMap' failed to load".
+
+### Stereo depth instead of the on-chip depth
+
+`anymal_rsl_utils/fast_stereo_ros` runs Fast-FoundationStereo (TensorRT) on the
+infra1/infra2 pairs and publishes `/depth_camera_<side>/stereo/image_rect_raw`
+(16UC1) plus `camera_info`. Its `replay_stereo_wavemap.launch` includes
+`replay_wavemap.launch` with `depth_config:=.../depth_cameras_stereo.yaml`, so the
+converter reads the stereo depth while the cloud topics, the self filter and this
+wavemap config stay as they are; pass `depth_fx:=... depth_cy:=...` from the
+recording's camera_info so wavemap reprojects with the right model.
+
+### Verify
+
+```bash
+rostest dynasense self_filter.test                     # synthetic box/cylinder/sphere robot
+rosnode info /self_filter                              # 7 subscriptions, 7 publications + body_markers
+rostopic hz /depth_camera_front_lower/depth/points_self_filtered /lidar/point_cloud_self_filtered
+rostopic echo -n1 --noarr /depth_camera_front_lower/depth/points_self_filtered   # height 1, x y z, point_step 16
+rostopic echo -n1 --noarr /wavemap/map                 # frame odom
+rostopic echo -n1 --noarr /wavemap/obstacle_pointcloud # width grows while the robot walks
+```
 
 ## foot_tof
 

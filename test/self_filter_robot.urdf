@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<!-- Tiny robot for test/self_filter.test: one box and one cylinder on base, a
+     sphere on a fixed child link, and a link without collision geometry. -->
+<robot name="self_filter_test">
+  <link name="base">
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.2 0.2 0.2"/></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0.5 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.05" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="ball">
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.05"/></geometry>
+    </collision>
+  </link>
+  <joint name="base_to_ball" type="fixed">
+    <parent link="base"/>
+    <child link="ball"/>
+    <origin xyz="0.5 0 0" rpy="0 0 0"/>
+  </joint>
+  <link name="nocol"/>
+  <joint name="base_to_nocol" type="fixed">
+    <parent link="base"/>
+    <child link="nocol"/>
+    <origin xyz="0 0 0.3" rpy="0 0 0"/>
+  </joint>
+</robot>

@@ -9,9 +9,15 @@
   The ground-clearance rays come from a Gazebo model plugin declared in the
   robot description, so there is no node for them here.
 
+  The raw /lidar/point_cloud is not body-filtered (the camera clouds the BPS
+  node reads are the ANYbotics point_cloud_self_filtered ones), so a dynasense
+  self filter runs here for the lidar only and publishes
+  /lidar/point_cloud_self_filtered, which bps.yaml's lidar_topic reads.
+
   Usage:
     roslaunch dynasense sim_contact_bps.launch
     roslaunch dynasense sim_contact_bps.launch ground_z:=-1.0
+    roslaunch dynasense sim_contact_bps.launch lidar_self_filter:=false   # raw lidar into the BPS node
 -->
 <launch>
 
@@ -33,9 +39,27 @@
        override it for one run. -->
   <arg name="ground_z"        default=""/>
 
+  <!-- Lidar self filter (dynasense_self_filter_node, config/self_filter.yaml):
+       drops lidar points within lidar_body_margin of the URDF collision
+       primitives of every link, no far clipping. -->
+  <arg name="lidar_self_filter"        default="true"/>
+  <arg name="self_filter_config"       default="$(find dynasense)/config/self_filter.yaml"/>
+  <arg name="lidar_body_margin"        default="0.05"/>  <!-- m from the collision primitives -->
+  <arg name="self_filter_stats_period" default="30.0"/>  <!-- s between statistics lines, 0 = only at shutdown -->
+
   <!-- ANYbotics/RSL simulation stack -->
   <node pkg="anymal_d_rsl" type="sim.py" name="anymal_d_rsl_sim" output="screen"
         args="--cfg $(arg cfg)"/>
+
+  <!-- Lidar self filter: /lidar/point_cloud -> /lidar/point_cloud_self_filtered -->
+  <node pkg="dynasense" type="dynasense_self_filter_node" name="lidar_self_filter" output="screen"
+        if="$(arg lidar_self_filter)">
+    <rosparam command="load" file="$(arg self_filter_config)"/>
+    <param name="enabled_inputs" type="str"    value="lidar"/>
+    <param name="max_range"      type="double" value="0.0"/>
+    <param name="body_margin"    type="double" value="$(arg lidar_body_margin)"/>
+    <param name="stats_period"   type="double" value="$(arg self_filter_stats_period)"/>
+  </node>
 
   <!-- Contact-history BPS map -->
   <node pkg="dynasense" type="dynasense_bps_node" name="dynasense_bps_node" output="screen"
