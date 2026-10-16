@@ -125,6 +125,13 @@ struct BpsMapConfig {
   double maxHorizontalRange{4.0};
 };
 
+/// Outcome of BpsMap::replaceRayVoxels().
+struct RayReplaceResult {
+  std::size_t accepted{0};   ///< points inserted (several points may share one voxel)
+  std::size_t rejected{0};   ///< non-finite, or outside the gates when they are applied
+  std::size_t truncated{0};  ///< not considered because the buffer was already full
+};
+
 /// The contact-history BPS map: two LRU voxel buffers plus the query operator.
 class BpsMap {
  public:
@@ -144,6 +151,18 @@ class BpsMap {
   /// Register an external depth/lidar hit (world frame). Returns false if the
   /// point was rejected by the height or range gates.
   bool addRayPoint(const Eigen::Vector3d& pointWorld);
+
+  /// Replace the WHOLE ray buffer with the given points (world frame), e.g. the
+  /// occupied cells of an occupancy map near the robot. The buffer is cleared,
+  /// then the points are inserted in input order until it holds rayCapacity
+  /// voxels; the remaining points are counted as truncated, so pass them
+  /// nearest-first. applyGates=false skips the height and horizontal gates
+  /// (non-finite points are always dropped). The contact buffer is untouched,
+  /// and a disabled ray path (capacity 0) stays empty.
+  RayReplaceResult replaceRayVoxels(const std::vector<Eigen::Vector3d>& pointsWorld, bool applyGates = true);
+
+  /// True when the point would pass the height and horizontal gates.
+  bool passesGates(const Eigen::Vector3d& pointWorld) const { return accept(pointWorld); }
 
   /// Clear both buffers. Called on episode/policy reset.
   void clear();

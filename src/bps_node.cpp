@@ -7,6 +7,10 @@
 // Inputs
 //   /contacts/{LF,LH,RF,RH}/{thigh,shank}   gazebo_msgs/ContactsState
 //   /depth_camera_*/point_cloud_self_filtered + lidar  sensor_msgs/PointCloud2
+//     (ray_voxel_source: sensors, the default), or
+//   /dynasense/wavemap_voxels                           sensor_msgs/PointCloud2
+//     (ray_voxel_source: map_voxels): occupied wavemap cells near the base from
+//     dynasense_wavemap_bps_bridge; every message replaces the ray buffer
 //   TF: map_frame (Gazebo world by default) <- sensors and robot links
 //
 // Outputs
@@ -121,9 +125,12 @@ class BpsNode {
 
     timer_ = nh_.createTimer(ros::Duration(1.0 / updateRate_), &BpsNode::onTimer, this);
 
-    ROS_INFO_STREAM("[dynasense_bps] up: " << contactSubs_.size() << " contact topics, " << raySources_.size()
-                                           << " ray sources, publishing " << statePublishTopic_ << " at "
-                                           << updateRate_ << " Hz");
+    ROS_INFO_STREAM("[dynasense_bps] up: " << contactSubs_.size() << " contact topics, "
+                                           << (rayVoxelSource_ == RayVoxelSource::MapVoxels
+                                                   ? std::string("ray voxels from ") + mapVoxelTopic_
+                                                   : std::to_string(raySources_.size()) + " ray sources")
+                                           << ", publishing " << statePublishTopic_ << " at " << updateRate_
+                                           << " Hz");
 
     if (!mapConfig_.contactEnabled && !mapConfig_.rayEnabled) {
       ROS_WARN("[dynasense_bps] BOTH voxel-activation paths are disabled: the BPS map will stay "
@@ -197,6 +204,26 @@ class BpsNode {
     pnh_.param<double>("max_height_above_ground", mapConfig_.maxHeightAboveGround, 1.8);
     pnh_.param<double>("max_horizontal_range", mapConfig_.maxHorizontalRange, 4.0);
 
+    // Where the ray voxels come from: the trained ray pattern over raw sensor
+    // clouds (simulation), or occupied cells of a wavemap occupancy map
+    // delivered by dynasense_wavemap_bps_bridge, each message replacing the
+    // whole ray buffer (launch/live_wavemap.launch).
+    std::string raySource = "sensors";
+    pnh_.param<std::string>("ray_voxel_source", raySource, raySource);
+    if (raySource == "map_voxels") {
+      rayVoxelSource_ = RayVoxelSource::MapVoxels;
+    } else {
+      if (raySource != "sensors") {
+        ROS_ERROR_STREAM("[dynasense_bps] ray_voxel_source must be 'sensors' or 'map_voxels', got '"
+                         << raySource << "'; using 'sensors'");
+      }
+      rayVoxelSource_ = RayVoxelSource::Sensors;
+    }
+    pnh_.param<std::string>("map_voxel_topic", mapVoxelTopic_, "/dynasense/wavemap_voxels");
+    pnh_.param<double>("map_voxel_timeout", mapVoxelTimeout_, 0.5);
+    pnh_.param<bool>("map_voxel_clear_on_timeout", mapVoxelClearOnTimeout_, false);
+    pnh_.param<bool>("map_voxels_apply_gates", mapVoxelsApplyGates_, false);
+
     mapConfig_.voxelSize = voxelSize;
     mapConfig_.maxQueryDistance = maxQueryDistance;
     mapConfig_.contactCapacity = static_cast<std::size_t>(std::max(0, contactCapacity));
@@ -247,6 +274,16 @@ class BpsNode {
     if (!mapConfig_.rayEnabled) {
       ROS_WARN("[dynasense_bps] external-ray voxel activation DISABLED "
                "(enable_ray_voxels: false); not subscribing to any depth or lidar cloud");
+      return;
+    }
+
+    if (rayVoxelSource_ == RayVoxelSource::MapVoxels) {
+      mapVoxelSub_ = nh_.subscribe<sensor_msgs::PointCloud2>(mapVoxelTopic_, 1, &BpsNode::onMapVoxels, this,
+                                                             ros::TransportHints().tcpNoDelay());
+      ROS_INFO_STREAM("[dynasense_bps] ray voxels from an occupancy map: " << mapVoxelTopic_
+                      << " (every message REPLACES the ray buffer, nearest first, up to " << mapConfig_.rayCapacity
+                      << " voxels; height/range gates " << (mapVoxelsApplyGates_ ? "applied" : "NOT applied")
+                      << "); depth_cloud_topics and use_lidar are ignored");
       return;
     }
 
@@ -581,6 +618,79 @@ class BpsNode {
   // Query and publish
   // -------------------------------------------------------------------------
 
+  // Occupied map cells (bridge output): replaces the whole ray buffer.
+  void onMapVoxels(const sensor_msgs::PointCloud2::ConstPtr& msg) {
+    const std::size_t n = static_cast<std::size_t>(msg->width) * msg->height;
+    std::vector<Eigen::Vector3d> points;
+    points.reserve(n);
+    if (n > 0) {
+      // An empty cloud may carry no fields at all, so only touch the iterators
+      // when there is something to read.
+      std::unique_ptr<sensor_msgs::PointCloud2ConstIterator<float>> itX, itY, itZ;
+      try {
+        itX.reset(new sensor_msgs::PointCloud2ConstIterator<float>(*msg, "x"));
+        itY.reset(new sensor_msgs::PointCloud2ConstIterator<float>(*msg, "y"));
+        itZ.reset(new sensor_msgs::PointCloud2ConstIterator<float>(*msg, "z"));
+      } catch (const std::runtime_error& ex) {
+        ROS_WARN_STREAM_THROTTLE(5.0, "[dynasense_bps] " << mapVoxelTopic_ << ": " << ex.what());
+        return;
+      }
+      for (; *itX != itX->end(); ++(*itX), ++(*itY), ++(*itZ)) {
+        const Eigen::Vector3d p(**itX, **itY, **itZ);
+        if (p.allFinite()) {
+          points.push_back(p);
+        }
+      }
+      if (msg->header.frame_id.empty()) {
+        ROS_WARN_STREAM_THROTTLE(2.0, "[dynasense_bps] " << mapVoxelTopic_ << ": skipping voxels with no frame");
+        return;
+      }
+      if (msg->header.frame_id != mapFrame_) {
+        Eigen::Isometry3d mapFromCloud = Eigen::Isometry3d::Identity();
+        if (!lookup(mapFrame_, msg->header.frame_id, msg->header.stamp, mapFromCloud)) {
+          return;  // keep the previous voxels
+        }
+        for (Eigen::Vector3d& p : points) {
+          p = mapFromCloud * p;
+        }
+      }
+    }
+
+    RayReplaceResult result;
+    std::size_t outsideBand = 0;
+    {
+      std::lock_guard<std::mutex> lock(mapMutex_);
+      result = map_.replaceRayVoxels(points, mapVoxelsApplyGates_);
+      if (!mapVoxelsApplyGates_) {
+        for (const Eigen::Vector3d& p : points) {
+          outsideBand += map_.passesGates(p) ? 0u : 1u;
+        }
+      }
+      lastMapVoxelReceipt_ = ros::Time::now();
+    }
+
+    if (!firstMapVoxelsLogged_) {
+      firstMapVoxelsLogged_ = true;
+      ROS_INFO_STREAM("[dynasense_bps] first map voxels: " << points.size() << " points in frame '"
+                                                           << msg->header.frame_id << "'");
+    }
+    if (result.truncated > 0) {
+      ROS_WARN_STREAM_THROTTLE(10.0, "[dynasense_bps] " << mapVoxelTopic_ << ": " << result.truncated
+                                     << " farthest voxels dropped, ray_buffer_capacity is " << mapConfig_.rayCapacity);
+    }
+    if (mapVoxelsApplyGates_ && result.rejected > 0) {
+      ROS_WARN_STREAM_THROTTLE(10.0, "[dynasense_bps] " << mapVoxelTopic_ << ": " << result.rejected
+                                     << " voxels rejected by the height/range gates");
+    }
+    if (outsideBand > 0) {
+      ROS_WARN_STREAM_THROTTLE(30.0, "[dynasense_bps] " << mapVoxelTopic_ << ": " << outsideBand << " of "
+                                     << points.size() << " voxels lie outside this node's height band [ground_z + "
+                                     << mapConfig_.minHeightAboveGround << ", ground_z + "
+                                     << mapConfig_.maxHeightAboveGround << ") with ground_z " << mapConfig_.groundZ
+                                     << "; kept, the bridge's z band governs (contacts still use ground_z)");
+    }
+  }
+
   void onTimer(const ros::TimerEvent&) {
     const ros::WallTime tickStart = ros::WallTime::now();
     const ros::Time stamp = ros::Time::now();
@@ -629,6 +739,25 @@ class BpsNode {
 
     std::lock_guard<std::mutex> lock(mapMutex_);
     map_.setBasePosition(mapFromBase.translation());
+
+    // Map-voxel staleness: keep the last voxels (they are fixed in map_frame,
+    // so still geometrically valid) unless asked to clear them.
+    if (rayVoxelSource_ == RayVoxelSource::MapVoxels && mapConfig_.rayEnabled && mapVoxelTimeout_ > 0.0) {
+      if (mapVoxelWatchStart_.isZero()) {
+        mapVoxelWatchStart_ = stamp;  // under sim time the clock may start late
+      }
+      const ros::Time reference = lastMapVoxelReceipt_.isZero() ? mapVoxelWatchStart_ : lastMapVoxelReceipt_;
+      if ((stamp - reference).toSec() > mapVoxelTimeout_) {
+        ROS_WARN_STREAM_THROTTLE(2.0, "[dynasense_bps] " << (lastMapVoxelReceipt_.isZero() ? "no message yet on "
+                                                                                         : "stale map voxels on ")
+                                                         << mapVoxelTopic_ << " (> " << mapVoxelTimeout_ << " s); "
+                                                         << (mapVoxelClearOnTimeout_ ? "ray buffer cleared"
+                                                                                     : "keeping the last voxels"));
+        if (mapVoxelClearOnTimeout_) {
+          map_.replaceRayVoxels({});
+        }
+      }
+    }
 
     const std::vector<QueryPointSpec>& specs = queryPointSpecs();
     for (std::size_t i = 0; i < specs.size(); ++i) {
@@ -854,6 +983,17 @@ class BpsNode {
   std::vector<ros::Subscriber> contactSubs_;
   std::vector<bool> contactState_;
   std::vector<RaySource> raySources_;
+
+  enum class RayVoxelSource { Sensors, MapVoxels };
+  RayVoxelSource rayVoxelSource_{RayVoxelSource::Sensors};
+  std::string mapVoxelTopic_{"/dynasense/wavemap_voxels"};
+  double mapVoxelTimeout_{0.5};
+  bool mapVoxelClearOnTimeout_{false};
+  bool mapVoxelsApplyGates_{false};
+  ros::Subscriber mapVoxelSub_;
+  ros::Time lastMapVoxelReceipt_;  //!< guarded by mapMutex_
+  ros::Time mapVoxelWatchStart_;   //!< guarded by mapMutex_
+  bool firstMapVoxelsLogged_{false};
 
   mutable std::mutex mapMutex_;
   BpsMap map_;

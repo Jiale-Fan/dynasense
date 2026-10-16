@@ -13,17 +13,29 @@ dynasense/
 ├── src/ground_clearance_plugin.cpp     # Gazebo model plugin, 17 downward rays
 ├── src/depth_image_to_pointcloud_node.cpp  # dynasense_depth_image_to_pointcloud_node (bag replay)
 ├── src/self_filter_node.cpp            # dynasense_self_filter_node: robot body + range filter for clouds
+├── src/wavemap_bps_bridge_node.cpp     # dynasense_wavemap_bps_bridge: wavemap cells near the base -> BPS voxels
+├── src/fk_ground_clearance_node.cpp    # dynasense_fk_ground_clearance_node: hardware gravity rays above a flat floor
+├── src/wavemap_voxel_extraction.{hpp,cpp}  # occupied-cell extraction (C++17, wavemap; optional target)
 ├── msg/{BpsState,GroundClearance}.msg
 ├── config/bps.yaml
 ├── config/depth_cameras.yaml           # intrinsics + topics for the depth converter
 ├── config/self_filter.yaml             # self filter: margin, range band, inputs
 ├── config/wavemap_replay.yaml          # wavemap server template ($(arg ...) substituted by the launch file)
+├── config/wavemap_live.yaml            # same for the robot: four face cameras + lidar, fast map publishing
+├── config/depth_cameras_live.yaml      # converter overlay for the robot (four cameras, driver camera_info)
+├── config/depth_cameras_sim.yaml       # converter overlay for Gazebo (simulated camera topics)
+├── config/bps_live.yaml                # BPS overlay for the robot (odom, ray voxels from the bridge)
 ├── launch/sim_contact_bps.launch       # the whole ContactBPS stack
 ├── launch/sim_bps_sensors_only.launch  # same, minus the learned controller
 ├── launch/depth_image_to_pointcloud.launch  # depth converter only
 ├── launch/replay_depth_clouds.launch   # bag + TF + depth converter + RViz
 ├── launch/replay_wavemap.launch        # bag + depth converter + self filter + wavemap + RViz
+├── launch/live_wavemap.launch          # robot: depth converter + self filter + wavemap + BPS bridge
+├── launch/bps_hardware.launch          # robot: floor topic + BPS node + FK ground clearance
 ├── scripts/tf_static_aggregator.py     # re-latches the union of /tf_static during bag replay
+├── scripts/check_wavemap_voxels.py     # checks the bridge output; z histogram to find the floor
+├── scripts/estimate_floor_z.py         # floor height from the four foot soles (TF / FK)
+├── scripts/start_bps_hardware.sh      # estimate the floor, then bps_hardware.launch
 └── foot_tof/                           # unrelated: foot ToF ray plugins + preprocessor
 ```
 
@@ -157,7 +169,9 @@ yellow pointing in arbitrary directions. `num_contact_voxels` and
 
 - **Physical contacts** — the strongest non-self contact patch on each THIGH and
   SHANK, force `> 1 N`, **rising edge only**, voxelised into a 200-entry LRU.
-- **External rays** — the six self-filtered depth clouds and the lidar cloud
+- **External rays** (`ray_voxel_source: sensors`, the default; with
+  `map_voxels` they come from a wavemap map instead, see "Live wavemap → BPS")
+  — the six self-filtered depth clouds and the lidar cloud
   (body-filtered by a `dynasense_self_filter_node` instance that
   `sim_contact_bps.launch` runs for the lidar only, `lidar_self_filter:=false`
   feeds the raw `/lidar/point_cloud`),
@@ -559,6 +573,143 @@ rostopic echo -n1 --noarr /depth_camera_front_lower/depth/points_self_filtered  
 rostopic echo -n1 --noarr /wavemap/map                 # frame odom
 rostopic echo -n1 --noarr /wavemap/obstacle_pointcloud # width grows while the robot walks
 ```
+
+## Live wavemap → BPS (real robot)
+
+`launch/live_wavemap.launch` runs the mapping pipeline on the robot's live
+topics and turns the map into the BPS node's external-ray voxels:
+
+```
+/depth_camera_{front,rear}_{upper,lower}/depth/image_rect_raw   (driver, + driver camera_info)
+  -> dynasense_depth_to_cloud (converter, 15 Hz)  -> /depth_camera_<side>/depth/points
+/lidar/point_cloud
+  -> self_filter (5 cm body margin, 0.8 m clip)   -> *_wavemap_filtered
+  -> wavemap (config/wavemap_live.yaml, odom)     -> /wavemap/map (incremental, every 0.05 s)
+  -> wavemap_bps_bridge                           -> /dynasense/wavemap_voxels
+       occupied 5 cm cell centres within bridge_radius (xy) of base,
+       centre z in [bridge_z_min, bridge_z_max) ABSOLUTE in odom, nearest first
+  -> dynasense_bps_node (ray_voxel_source: map_voxels): each message REPLACES the ray buffer
+```
+
+It sets no `/use_sim_time`, plays no bag, does not reload `anymal_description`
+and does not re-latch static TF; the robot stack provides all of that. It does
+**not** start the BPS node.
+
+### Run (real robot, on the LPC)
+
+```bash
+# 1. mapping + bridge; the bridge waits for the floor height
+roslaunch dynasense live_wavemap.launch depth_fx:=... depth_fy:=... depth_cx:=... depth_cy:=...
+# 2. robot standing still on flat ground: estimate the floor, start the BPS side
+rosrun dynasense start_bps_hardware.sh
+# 3. switch motion_control_manager to parkour
+```
+
+`start_bps_hardware.sh` runs `scripts/estimate_floor_z.py` (sole heights of the
+four feet from TF, i.e. forward kinematics on top of the estimator's odom pose;
+median over 2 s; refuses when the soles differ by more than 3 cm) and then
+`launch/bps_hardware.launch floor_z:=<estimate>`, which starts:
+
+- a latched `/dynasense/floor_z` (std_msgs/Float64): the bridge's z band becomes
+  `[floor + 0.05, floor + 1.8)`;
+- `dynasense_bps_node` with `config/bps.yaml` + `config/bps_live.yaml`
+  (`map_frame: odom`, ray voxels from the bridge) and `ground_z` = floor;
+- `dynasense_fk_ground_clearance_node`: the 17 gravity rays of the policy
+  observation (`/dynasense/ground_clearance`, same message as the Gazebo plugin)
+  as the heights of base, HIP, THIGH, SHANK and FOOT above the flat floor,
+  clipped to [0, 2] m. Obstacles under the robot are not seen.
+
+Options: `start_bps_hardware.sh --floor-z -0.29` skips the estimate, `--duration`,
+`--max-spread`, `--frame` go to the estimator, anything after `--` to the launch
+file (e.g. `-- ground_clearance:=false`). Take `depth_fx…cy` from
+`rostopic echo -n1 /depth_camera_front_lower/depth/camera_info` (K). In Gazebo
+the plugin provides the clearance and `sim_contact_bps.launch` the BPS node, so
+none of this is needed there.
+
+| Arg | Default | Meaning |
+|---|---|---|
+| `floor_z` | empty | floor height in `world_frame`; empty: 0 with `sim:=true`, otherwise read from `floor_z_topic` (`/dynasense/floor_z`, published by `start_bps_hardware.sh`). NOT 0 in odom on ANYmal D (about −0.29 m in the 2026-09-23 bag). The bridge compares it with the lowest foot and warns when it is off by more than 5 cm |
+| `bridge_radius` | 1.0 m | horizontal radius around `base` (the policy's ray horizon) |
+| `bridge_z_min_above_floor`, `bridge_z_max_above_floor` | 0.05, 1.8 m | z band on cell centres relative to the floor (mirrors the BPS height band) |
+| `bridge_z_min`, `bridge_z_max` | empty | absolute band; overrides the floor-relative one when both are set |
+| `bridge_max_voxels` | 2000 | nearest-first cap, equal to `ray_buffer_capacity` |
+| `bridge_rate` | 20 Hz | extraction and publishing rate |
+| `bridge_occupancy_threshold` | 0.0 | log-odds above which a cell counts as occupied |
+| `publish_map_period` | 0.05 s | incremental `/wavemap/map` period (bridge latency) |
+| `input_retry_period` | 0.02 s | how often wavemap integrates queued clouds |
+| `tree_height` | 6 | block size `min_cell_width·2^tree_height`; 5 halves the bytes per publish |
+| `wavemap_threads` | 2 | the LPC also runs locomotion |
+| `launch_prefix` | `nice -n 10` | process priority of all four nodes |
+| `sim` | false | Gazebo: simulated camera topics, `world` frame |
+| `filtered_suffix` | `_wavemap_filtered` | self filter output suffix, read by wavemap |
+| `depth_cameras`, `use_lidar`, `body_margin`, `max_range`, `min_cell_width`, `depth_fx…cy`, `depth_rate`, … | as in `replay_wavemap.launch` | |
+
+The BPS side is configured in `config/bps.yaml`: `ray_voxel_source`
+(`sensors` | `map_voxels`), `map_voxel_topic`, `map_voxel_timeout` (warn after
+0.5 s without a message, keep the last voxels unless
+`map_voxel_clear_on_timeout`), `map_voxels_apply_gates` (false: the bridge band
+governs, `ground_z` then only matters for contact voxels). `BpsState` is
+unchanged, so the controller needs no rebuild; `num_ray_voxels` reports the
+wavemap voxel count.
+
+The bridge logs every `stats_period` and at shutdown: extraction time, cells
+visited, voxels kept, map message rate/size/merge time, map age, TF failures and
+the lowest foot height against `floor_z`.
+
+### Gazebo
+
+```bash
+roslaunch dynasense sim_contact_bps.launch bps_ray_source:=map_voxels   # BPS ray voxels from the bridge
+roslaunch dynasense live_wavemap.launch sim:=true                       # second terminal
+rviz -d $(rospack find anymal_d_rsl)/config/ui/config_depth_lidar.rviz  # group "Wavemap (live_wavemap.launch)"
+```
+
+`sim:=true` reads the simulated cameras' `aligned_depth_to_color/image_raw`
+(`config/depth_cameras_sim.yaml`), builds the map in the Gazebo `world` frame
+(the BPS node's `map_frame` in simulation) and keeps `floor_z` at 0, the height
+of the contact_bps terrain. Do not pass the robot's odom value (−0.29) there. The
+live filter publishes `*_wavemap_filtered`, so it does not collide with the
+`/lidar/point_cloud_self_filtered` of `sim_contact_bps.launch`. Without
+`bps_ray_source:=map_voxels` the BPS node keeps binning the sensor clouds and the
+wavemap is only displayed. Contacts and ground clearance still come from Gazebo.
+
+### Check
+
+```bash
+rosrun dynasense check_wavemap_voxels.py _radius:=1.0 _z_min:=-0.24 _z_max:=1.51
+# floor: a wide band and a histogram (start a second bridge with _z_min:=-1.5 _z_max:=1.5)
+rosrun dynasense check_wavemap_voxels.py _topic:=<wide topic> _histogram:=true _duration:=20
+```
+
+Bag test of the live launch on a PC (fresh master): set `use_sim_time`, load
+`anymal_description` from the xacro, run `scripts/tf_static_aggregator.py
+_bags:=<bag>`, start the launch and the BPS node as above, then `rosbag play
+--clock` the four face cameras' `depth/image_rect_raw`, `/lidar/point_cloud`,
+`/tf` and `/tf_static`.
+
+### Caveats
+
+- **Latency.** An obstacle reaches the BPS 60–250 ms after it is seen
+  (integration, map publish, bridge tick), against 20–40 ms for the direct ray
+  path. The bridge's map age shows it.
+- **One wavemap thread.** Integration, map publishing and the obstacle cloud
+  share one thread; if it falls behind (wavemap logs "Dropping cloud", the map
+  age grows), use `tree_height:=5`, `publish_map_period:=0.1` or `depth_rate:=10`.
+- **Map growth.** wavemap 2.0.1's `crop_map` looks up the body pose at exactly
+  the current time and fails on live TF, so the map is not cropped; reset it
+  between runs (`rosservice call /wavemap/reset_map`).
+- **Absolute z band vs odom drift.** Re-measure `floor_z` each session; leave a
+  margin on `bridge_z_min` on uneven ground.
+- **Ghost cells.** The 0.8 m clip also stops free-space carving beyond 0.8 m, so
+  noise inside 0.8 m is never cleared; compare with
+  `max_range:=0 wavemap_max_range:=0.8`.
+- **Build.** The bridge is compiled with `-march=native` (wavemap's flags); build
+  it on the computer that runs it. It is skipped when wavemap is not in the
+  workspace.
+- **Training mismatch.** The policy was trained on a 1 m ray-hit LRU, not on a
+  persistent dense occupancy map.
+- Contact voxels have no source on hardware (they come from Gazebo contact
+  topics). The FK ground clearance assumes a flat floor at the estimated height.
 
 ## foot_tof
 

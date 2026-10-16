@@ -19,6 +19,8 @@
     roslaunch dynasense sim_contact_bps.launch policy:=lsio_sgs       # LSIO + SGS actor
     roslaunch dynasense sim_contact_bps.launch ground_z:=-1.0
     roslaunch dynasense sim_contact_bps.launch lidar_self_filter:=false   # raw lidar into the BPS node
+    roslaunch dynasense sim_contact_bps.launch bps_ray_source:=map_voxels # ray voxels from wavemap, then
+    roslaunch dynasense live_wavemap.launch sim:=true                     # (in a second terminal)
 -->
 <launch>
 
@@ -46,6 +48,12 @@
        ground_z bps.yaml sets. Left empty, bps.yaml governs; pass a value to
        override it for one run. -->
   <arg name="ground_z"        default=""/>
+
+  <!-- Where the BPS ray voxels come from: "sensors" bins the camera/lidar clouds
+       onto the trained ray grid; "map_voxels" takes the occupied wavemap cells
+       published by launch/live_wavemap.launch (sim:=true), each message
+       replacing the ray buffer. Empty keeps bps.yaml's ray_voxel_source. -->
+  <arg name="bps_ray_source"  default=""/>
 
   <!-- Lidar self filter (dynasense_self_filter_node, config/self_filter.yaml):
        drops lidar points within lidar_body_margin of the URDF collision
@@ -76,6 +84,8 @@
     <param name="ground_z"        value="$(arg ground_z)"
            if="$(eval arg('ground_z') != '')"/>
     <param name="publish_markers" value="$(arg publish_markers)"/>
+    <param name="ray_voxel_source" type="str" value="$(arg bps_ray_source)"
+           if="$(eval arg('bps_ray_source') != '')"/>
   </node>
 
 </launch>

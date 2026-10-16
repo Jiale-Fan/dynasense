@@ -40,9 +40,16 @@
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>urdf</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
-  <!-- launch/replay_wavemap.launch (both packages live in this workspace) -->
+  <!-- launch/replay_wavemap.launch, launch/live_wavemap.launch (all live in this workspace) -->
   <exec_depend>wavemap_ros</exec_depend>
   <exec_depend>wavemap_rviz_plugin</exec_depend>
+  <!-- Optional dynasense_wavemap_bps_bridge: declared so catkin builds wavemap
+       first; CMakeLists.txt skips the bridge when they are absent. -->
+  <build_depend>wavemap</build_depend>
+  <build_depend>wavemap_msgs</build_depend>
+  <build_depend>wavemap_ros_conversions</build_depend>
+  <exec_depend>wavemap_msgs</exec_depend>
+  <exec_depend>wavemap_ros_conversions</exec_depend>
   <!-- scripts/tf_static_aggregator.py (bag replay) and the anymal_description
        loaded by launch/replay_depth_clouds.launch -->
   <exec_depend>rosbag</exec_depend>
@@ -56,6 +63,7 @@
   <exec_depend>rviz</exec_depend>
 
   <test_depend>rostest</test_depend>
+  <test_depend>rosunit</test_depend>
 
   <export>
     <gazebo_ros plugin_path="${prefix}/lib"/>

@@ -151,3 +151,18 @@ lidar_vfov_min_deg: -15.0
 # lidar_vfov_min_deg: 0.0
 lidar_vfov_max_deg: 15.0
 lidar_horizontal_resolution_deg: 30.0
+
+# --- external-ray voxel source -------------------------------------------------
+#  sensors     bin the depth/lidar clouds above onto the trained ray pattern
+#              (simulation, the default).
+#  map_voxels  occupied wavemap cells near the base from
+#              dynasense_wavemap_bps_bridge (launch/live_wavemap.launch). Every
+#              message REPLACES the whole ray buffer (nearest first, up to
+#              ray_buffer_capacity); the depth/lidar topics above are not
+#              subscribed. Contact voxels are unaffected.
+ray_voxel_source: sensors
+map_voxel_topic: /dynasense/wavemap_voxels
+map_voxel_timeout: 0.5             # [s] warn when no voxel message arrived for this long; 0 = off
+map_voxel_clear_on_timeout: false  # true: empty the ray buffer on timeout instead of keeping the last voxels
+map_voxels_apply_gates: false      # false: the bridge's radius and z band govern; ground_z and the
+                                   # height band above then only apply to contact voxels

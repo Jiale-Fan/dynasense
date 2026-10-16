@@ -1,0 +1,16 @@
+<launch>
+  <!-- Flat-floor ground clearance (fixed floor and floor from a topic) and the floor estimator. -->
+  <node pkg="dynasense" type="dynasense_fk_ground_clearance_node" name="hw_clearance_fixed" output="screen">
+    <param name="floor_z" value="0.06"/>
+    <param name="max_range" value="0.4"/>
+    <param name="topic" value="/hw_test/clearance_fixed"/>
+    <param name="marker_topic" value="/hw_test/markers_fixed"/>
+  </node>
+  <node pkg="dynasense" type="dynasense_fk_ground_clearance_node" name="hw_clearance_topic" output="screen">
+    <param name="floor_z_topic" value="/hw_test/floor_z"/>
+    <param name="max_range" value="2.0"/>
+    <param name="topic" value="/hw_test/clearance_topic"/>
+    <param name="marker_topic" value="/hw_test/markers_topic"/>
+  </node>
+  <test test-name="hardware_bps" pkg="dynasense" type="test_hardware_bps.py" time-limit="90"/>
+</launch>

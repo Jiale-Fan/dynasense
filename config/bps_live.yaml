@@ -1,0 +1,13 @@
+# Real-robot overlay for config/bps.yaml (load it AFTER bps.yaml):
+#
+#   rosparam load $(rospack find dynasense)/config/bps.yaml      /dynasense_bps_node
+#   rosparam load $(rospack find dynasense)/config/bps_live.yaml /dynasense_bps_node
+#
+# The robot has no Gazebo `world` frame, so everything lives in odom. Ray voxels
+# come from launch/live_wavemap.launch (dynasense_wavemap_bps_bridge). Set
+# ground_z to the session's floor height in odom (the floor_z you pass to
+# live_wavemap.launch): contact voxels still use the ground_z height band.
+# (The contact path reads Gazebo contact topics, which do not exist on hardware.)
+map_frame: odom
+ray_voxel_source: map_voxels
+ground_z: 0.0

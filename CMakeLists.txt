@@ -84,6 +84,48 @@ add_executable(dynasense_self_filter_node src/self_filter_node.cpp)
 target_link_libraries(dynasense_self_filter_node ${catkin_LIBRARIES})
 add_dependencies(dynasense_self_filter_node ${catkin_EXPORTED_TARGETS})
 
+# Hardware stand-in for the ground-clearance plugin: 17 link heights above a flat floor (TF / forward kinematics).
+add_executable(dynasense_fk_ground_clearance_node src/fk_ground_clearance_node.cpp)
+target_link_libraries(dynasense_fk_ground_clearance_node ${catkin_LIBRARIES})
+add_dependencies(dynasense_fk_ground_clearance_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+##############################################
+## Optional: wavemap -> BPS bridge (C++17)  ##
+##############################################
+# Built only when the wavemap packages are in the workspace. The rest of the
+# package stays C++14; wavemap's headers need C++17 and its ABI flags
+# (-march=native, EIGEN_INITIALIZE_MATRICES_BY_NAN), applied per target below.
+find_package(wavemap QUIET)
+find_package(wavemap_ros_conversions QUIET)
+set(DYNASENSE_WITH_WAVEMAP OFF)
+if(wavemap_FOUND AND wavemap_ros_conversions_FOUND AND COMMAND set_wavemap_target_properties)
+  set(DYNASENSE_WITH_WAVEMAP ON)
+  function(dynasense_wavemap_target target)
+    get_target_property(_opts ${target} COMPILE_OPTIONS)
+    if(_opts)
+      list(REMOVE_ITEM _opts -std=c++14)
+      set_target_properties(${target} PROPERTIES COMPILE_OPTIONS "${_opts}")
+    endif()
+    set_wavemap_target_properties(${target})
+    target_include_directories(${target} PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src ${wavemap_ros_conversions_INCLUDE_DIRS} ${wavemap_INCLUDE_DIRS})
+  endfunction()
+
+  add_library(dynasense_wavemap_voxels STATIC src/wavemap_voxel_extraction.cpp)
+  dynasense_wavemap_target(dynasense_wavemap_voxels)
+  target_link_libraries(dynasense_wavemap_voxels ${wavemap_LIBRARIES})
+
+  add_executable(dynasense_wavemap_bps_bridge src/wavemap_bps_bridge_node.cpp)
+  dynasense_wavemap_target(dynasense_wavemap_bps_bridge)
+  target_link_libraries(dynasense_wavemap_bps_bridge
+    dynasense_wavemap_voxels ${wavemap_ros_conversions_LIBRARIES} ${catkin_LIBRARIES})
+  add_dependencies(dynasense_wavemap_bps_bridge ${catkin_EXPORTED_TARGETS})
+  install(TARGETS dynasense_wavemap_bps_bridge RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+  message(STATUS "dynasense: building dynasense_wavemap_bps_bridge")
+else()
+  message(STATUS "dynasense: wavemap not found, dynasense_wavemap_bps_bridge is not built")
+endif()
+
 ####################
 ## Gazebo plugins ##
 ####################
@@ -109,10 +151,28 @@ if(CATKIN_ENABLE_TESTING)
       test/test_frame_alignment.py
       test/test_depth_image_to_pointcloud.py
       test/test_self_filter.py
+      test/test_map_voxels.py
+      test/test_wavemap_bps_bridge.py
+      test/test_hardware_bps.py
     DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
   add_rostest(test/frame_alignment.test DEPENDENCIES dynasense_bps_node)
   add_rostest(test/depth_image_to_pointcloud.test DEPENDENCIES dynasense_depth_image_to_pointcloud_node)
   add_rostest(test/self_filter.test DEPENDENCIES dynasense_self_filter_node)
+  add_rostest(test/map_voxels.test DEPENDENCIES dynasense_bps_node)
+  add_rostest(test/hardware_bps.test DEPENDENCIES dynasense_fk_ground_clearance_node)
+  catkin_add_gtest(test_bps_map test/test_bps_map.cpp)
+  if(TARGET test_bps_map)
+    target_link_libraries(test_bps_map dynasense_bps_map)
+  endif()
+  if(DYNASENSE_WITH_WAVEMAP)
+    catkin_add_gtest(test_wavemap_voxel_extraction test/test_wavemap_voxel_extraction.cpp)
+    if(TARGET test_wavemap_voxel_extraction)
+      dynasense_wavemap_target(test_wavemap_voxel_extraction)
+      target_link_libraries(test_wavemap_voxel_extraction
+        dynasense_wavemap_voxels ${wavemap_ros_conversions_LIBRARIES} ${catkin_LIBRARIES})
+    endif()
+    add_rostest(test/wavemap_bps_bridge.test DEPENDENCIES dynasense_wavemap_bps_bridge)
+  endif()
 endif()
 
 #############
@@ -123,6 +183,8 @@ catkin_install_python(
   PROGRAMS
     foot_tof/bin/tof_preprocessor.py
     scripts/tf_static_aggregator.py
+    scripts/check_wavemap_voxels.py
+    scripts/estimate_floor_z.py
   DESTINATION
     ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
@@ -130,6 +192,7 @@ catkin_install_python(
 # Diagnostic shell scripts, runnable with `rosrun dynasense <name>`.
 install(PROGRAMS
     scripts/check_contact_sensors.sh
+    scripts/start_bps_hardware.sh
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
@@ -146,6 +209,7 @@ install(TARGETS
     dynasense_bps_node
     dynasense_depth_image_to_pointcloud_node
     dynasense_self_filter_node
+    dynasense_fk_ground_clearance_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

@@ -1,0 +1,209 @@
+# wavemap server configuration for launch/live_wavemap.launch (real robot).
+#
+# Loaded with <rosparam file=... subst_value="true"/>: roslaunch replaces every
+# "arg" substitution token in this file (comments included, so none may appear
+# in prose) with the launch file's arguments before the YAML is parsed.
+# Format: wavemap 2.0.1 (dependencies/wavemap); united values must be maps such
+# as { meters: 0.05 }, { degrees: 15 }, { seconds: 1 }.
+#
+# Same sensor models as config/wavemap_replay.yaml, restricted to the four face
+# cameras and the lidar. Differences for live use:
+#   - publish_map runs every publish_map_period (default 0.05 s) because
+#     dynasense_wavemap_bps_bridge builds the BPS voxels from /wavemap/map;
+#     each message carries only the blocks changed since the last one.
+#   - tree_height sets the block size (min_cell_width * 2^tree_height; 6 gives
+#     3.2 m blocks at 5 cm, 5 gives 1.6 m and roughly halves the bytes per
+#     publish).
+#   - processing_retry_period is how often each input retries its queue (and
+#     thus integrates waiting clouds); shorter means lower map latency.
+#   - No crop_map: in wavemap 2.0.1 it looks up the body pose at exactly the
+#     current time without waiting, which fails on live TF, and its distance
+#     has no default. The map therefore grows along the path; reset it between
+#     runs with the reset_map service.
+# Inputs are the self filter's outputs with the launch file's filtered suffix, kept
+# apart from other self filters (sim_contact_bps.launch runs one on the lidar).
+# The pinhole intrinsics must match the real cameras (pass the driver's
+# camera_info values as depth_fx/fy/cx/cy); see config/wavemap_replay.yaml for
+# the min_range vs range_sigma rule.
+
+general:
+  world_frame: "$(arg world_frame)"
+  logging_level: info
+  num_threads: $(arg wavemap_threads)
+  allow_reset_map_service: true
+
+map:
+  type: hashed_wavelet_octree          # required by the bridge and the RViz Surface view
+  min_cell_width: { meters: $(arg min_cell_width) }
+  tree_height: $(arg tree_height)
+
+map_operations:
+  - type: threshold_map
+    once_every: { seconds: 2.0 }
+  - type: prune_map
+    once_every: { seconds: 10.0 }
+  - type: publish_map                  # incremental: only blocks changed since the last publish
+    once_every: { seconds: $(arg publish_map_period) }
+    max_num_blocks_per_msg: 1000
+    topic: map                         # -> /wavemap/map (bridge input), full resend: /wavemap/map_request_full
+  - type: publish_pointcloud           # RViz only
+    once_every: { seconds: $(arg obstacle_cloud_period) }
+    occupancy_threshold_log_odds: 0.001
+    topic: obstacle_pointcloud         # -> /wavemap/obstacle_pointcloud
+
+measurement_integrators:
+  # RealSense D435 depth camera at 424x240; intrinsics from the launch arguments.
+  depth_camera_front_upper:
+    projection_model:
+      type: pinhole_camera_projector
+      width: 424
+      height: 240
+      fx: $(arg depth_fx)
+      fy: $(arg depth_fy)
+      cx: $(arg depth_cx)
+      cy: $(arg depth_cy)
+    measurement_model:
+      type: continuous_ray
+      range_sigma: { meters: $(arg depth_range_sigma) }
+      scaling_free: 0.2
+      scaling_occupied: 0.4
+    integration_method:
+      type: hashed_wavelet_integrator
+      min_range: { meters: $(arg depth_min_range) }
+      max_range: { meters: $(arg wavemap_max_range_eff) }
+      termination_update_error: 0.1
+      max_update_resolution: { meters: $(arg min_cell_width) }
+
+  # RealSense D435 depth camera at 424x240; intrinsics from the launch arguments.
+  depth_camera_front_lower:
+    projection_model:
+      type: pinhole_camera_projector
+      width: 424
+      height: 240
+      fx: $(arg depth_fx)
+      fy: $(arg depth_fy)
+      cx: $(arg depth_cx)
+      cy: $(arg depth_cy)
+    measurement_model:
+      type: continuous_ray
+      range_sigma: { meters: $(arg depth_range_sigma) }
+      scaling_free: 0.2
+      scaling_occupied: 0.4
+    integration_method:
+      type: hashed_wavelet_integrator
+      min_range: { meters: $(arg depth_min_range) }
+      max_range: { meters: $(arg wavemap_max_range_eff) }
+      termination_update_error: 0.1
+      max_update_resolution: { meters: $(arg min_cell_width) }
+
+  # RealSense D435 depth camera at 424x240; intrinsics from the launch arguments.
+  depth_camera_rear_upper:
+    projection_model:
+      type: pinhole_camera_projector
+      width: 424
+      height: 240
+      fx: $(arg depth_fx)
+      fy: $(arg depth_fy)
+      cx: $(arg depth_cx)
+      cy: $(arg depth_cy)
+    measurement_model:
+      type: continuous_ray
+      range_sigma: { meters: $(arg depth_range_sigma) }
+      scaling_free: 0.2
+      scaling_occupied: 0.4
+    integration_method:
+      type: hashed_wavelet_integrator
+      min_range: { meters: $(arg depth_min_range) }
+      max_range: { meters: $(arg wavemap_max_range_eff) }
+      termination_update_error: 0.1
+      max_update_resolution: { meters: $(arg min_cell_width) }
+
+  # RealSense D435 depth camera at 424x240; intrinsics from the launch arguments.
+  depth_camera_rear_lower:
+    projection_model:
+      type: pinhole_camera_projector
+      width: 424
+      height: 240
+      fx: $(arg depth_fx)
+      fy: $(arg depth_fy)
+      cx: $(arg depth_cx)
+      cy: $(arg depth_cy)
+    measurement_model:
+      type: continuous_ray
+      range_sigma: { meters: $(arg depth_range_sigma) }
+      scaling_free: 0.2
+      scaling_occupied: 0.4
+    integration_method:
+      type: hashed_wavelet_integrator
+      min_range: { meters: $(arg depth_min_range) }
+      max_range: { meters: $(arg wavemap_max_range_eff) }
+      termination_update_error: 0.1
+      max_update_resolution: { meters: $(arg min_cell_width) }
+
+  # RealSense D435 depth camera at 424x240; intrinsics from the launch arguments.
+  # Velodyne VLP-16: 16 rings at -15 + 2*ring deg, 0.2 deg azimuth columns, frame "lidar" (z up).
+  lidar:
+    projection_model:
+      type: spherical_projector
+      elevation:
+        num_cells: 16
+        min_angle: { degrees: -15.0 }
+        max_angle: { degrees: 15.0 }
+      azimuth:
+        num_cells: 1800
+        min_angle: { degrees: -180.0 }
+        max_angle: { degrees: 180.0 }
+    measurement_model:
+      type: continuous_beam
+      angle_sigma: { degrees: 0.1 }
+      range_sigma: { meters: $(arg lidar_range_sigma) }
+      scaling_free: 0.2
+      scaling_occupied: 0.4
+    integration_method:
+      type: hashed_wavelet_integrator
+      min_range: { meters: $(arg lidar_min_range) }
+      max_range: { meters: $(arg wavemap_max_range_eff) }
+      termination_update_error: 0.1
+      max_update_resolution: { meters: $(arg min_cell_width) }
+
+inputs:
+  - type: pointcloud_topic
+    topic_name: "/depth_camera_front_upper/depth/points$(arg filtered_suffix)"
+    topic_type: PointCloud2
+    measurement_integrator_names: [depth_camera_front_upper]
+    topic_queue_length: 10
+    max_wait_for_pose: { seconds: 1.0 }
+    processing_retry_period: { seconds: $(arg input_retry_period) }
+    time_offset: { seconds: $(arg depth_time_offset) }
+  - type: pointcloud_topic
+    topic_name: "/depth_camera_front_lower/depth/points$(arg filtered_suffix)"
+    topic_type: PointCloud2
+    measurement_integrator_names: [depth_camera_front_lower]
+    topic_queue_length: 10
+    max_wait_for_pose: { seconds: 1.0 }
+    processing_retry_period: { seconds: $(arg input_retry_period) }
+    time_offset: { seconds: $(arg depth_time_offset) }
+  - type: pointcloud_topic
+    topic_name: "/depth_camera_rear_upper/depth/points$(arg filtered_suffix)"
+    topic_type: PointCloud2
+    measurement_integrator_names: [depth_camera_rear_upper]
+    topic_queue_length: 10
+    max_wait_for_pose: { seconds: 1.0 }
+    processing_retry_period: { seconds: $(arg input_retry_period) }
+    time_offset: { seconds: $(arg depth_time_offset) }
+  - type: pointcloud_topic
+    topic_name: "/depth_camera_rear_lower/depth/points$(arg filtered_suffix)"
+    topic_type: PointCloud2
+    measurement_integrator_names: [depth_camera_rear_lower]
+    topic_queue_length: 10
+    max_wait_for_pose: { seconds: 1.0 }
+    processing_retry_period: { seconds: $(arg input_retry_period) }
+    time_offset: { seconds: $(arg depth_time_offset) }
+  - type: pointcloud_topic
+    topic_name: "/lidar/point_cloud$(arg filtered_suffix)"
+    topic_type: PointCloud2
+    measurement_integrator_names: [lidar]
+    topic_queue_length: 10
+    max_wait_for_pose: { seconds: 1.0 }
+    processing_retry_period: { seconds: $(arg input_retry_period) }
+    time_offset: { seconds: $(arg lidar_time_offset) }   # header stamp = scan start; +0.05 s = mid scan

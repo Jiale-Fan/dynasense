@@ -1,0 +1,164 @@
+<?xml version="1.0"?>
+<!--
+  Live (real robot): wavemap around the base and the wavemap to BPS bridge.
+
+    /depth_camera_<side>/depth/image_rect_raw  (four face cameras, driver camera_info)
+      -> dynasense_depth_image_to_pointcloud_node   /depth_camera_<side>/depth/points  (depth_rate Hz)
+    /lidar/point_cloud
+      -> dynasense_self_filter_node                 *_wavemap_filtered (body_margin, max_range)
+      -> wavemap_ros/ros_server (config/wavemap_live.yaml, world_frame)   /wavemap/map
+      -> dynasense_wavemap_bps_bridge               bridge_topic (default /dynasense/wavemap_voxels):
+           occupied cell centres within bridge_radius of base_frame in xy, centre z in
+           [bridge_z_min, bridge_z_max) ABSOLUTE in world_frame, nearest first
+
+  Unlike launch/replay_wavemap.launch this sets no /use_sim_time, plays no bag,
+  does not reload anymal_description and does not re-latch static TF: the robot
+  stack provides all of that.
+
+  NOT started here: dynasense_bps_node. To feed the controller, run it with
+  config/bps.yaml followed by config/bps_live.yaml (map_frame odom,
+  ray_voxel_source map_voxels) and the same floor height as ground_z.
+
+  floor_z is the floor height in world_frame; the bridge keeps the cells whose
+  centres lie in [floor_z + bridge_z_min_above_floor, floor_z +
+  bridge_z_max_above_floor). It is NOT 0 in odom on ANYmal D (in the 2026-09-23
+  bag the stance feet sit at about -0.29 m, drifting by centimetres per minute).
+  Left empty on the robot, the bridge waits for it on floor_z_topic, which
+  scripts/start_bps_hardware.sh publishes after estimating it from the feet; in
+  Gazebo (sim:=true) it defaults to 0, the terrain height. The bridge compares it
+  with the lowest foot and warns when it is off.
+
+  Run it on the LPC, where the four face cameras are; only /lidar/point_cloud
+  then crosses the network from the NPC. Pass the cameras' real intrinsics
+  (rostopic echo -n1 /depth_camera_front_lower/depth/camera_info) as
+  depth_fx/fy/cx/cy; the defaults are the Gazebo model's.
+
+  Gazebo (sim:=true): the depth images come from the simulated cameras' own
+  topics (config/depth_cameras_sim.yaml), the map lives in the Gazebo `world`
+  frame (the BPS node's map_frame there) and the floor of the contact_bps terrain
+  is at z = 0, which is the floor_z default. Start the BPS node with
+  bps_ray_source:=map_voxels so it uses these voxels.
+
+  Usage:
+    roslaunch dynasense live_wavemap.launch                                # robot, floor from start_bps_hardware.sh
+    roslaunch dynasense live_wavemap.launch floor_z:=-0.29 bridge_radius:=1.2 use_lidar:=false
+    roslaunch dynasense sim_contact_bps.launch bps_ray_source:=map_voxels  # Gazebo, then:
+    roslaunch dynasense live_wavemap.launch sim:=true
+-->
+<launch>
+  <arg name="sim"               default="false"/> <!-- true: Gazebo camera topics, world frame -->
+
+  <!-- sensors and depth conversion -->
+  <arg name="depth_cameras"     default="front_upper front_lower rear_upper rear_lower"/> <!-- self filter inputs; the converter list is in depth_live_config -->
+  <arg name="use_lidar"         default="true"/>
+  <arg name="depth_config"      default="$(find dynasense)/config/depth_cameras.yaml"/>
+  <arg name="depth_live_config" default="$(eval find('dynasense') + '/config/depth_cameras_' + ('sim' if arg('sim') else 'live') + '.yaml')"/>
+  <arg name="depth_rate"        default="15.0"/>  <!-- converter cap per camera [Hz] -->
+  <arg name="decimation"        default="1"/>
+  <arg name="depth_fx"          default="227.343"/>
+  <arg name="depth_fy"          default="227.343"/>
+  <arg name="depth_cx"          default="211.5"/>
+  <arg name="depth_cy"          default="119.5"/>
+
+  <!-- self filter -->
+  <arg name="body_margin"       default="0.05"/>  <!-- m from the URDF collision primitives -->
+  <arg name="max_range"         default="0.8"/>   <!-- m from the sensor origin, 0 = no clipping -->
+  <arg name="filter_config"     default="$(find dynasense)/config/self_filter.yaml"/>
+  <arg name="filtered_suffix"   default="_wavemap_filtered"/> <!-- self filter output = input topic + suffix (wavemap inputs) -->
+
+  <!-- wavemap -->
+  <arg name="wavemap_config"    default="$(find dynasense)/config/wavemap_live.yaml"/>
+  <arg name="world_frame"       default="$(eval 'world' if arg('sim') else 'odom')"/>
+  <arg name="min_cell_width"    default="0.05"/>  <!-- keep equal to the BPS voxel_size: one to one lattice -->
+  <arg name="tree_height"       default="6"/>     <!-- block = min_cell_width * 2^tree_height -->
+  <arg name="wavemap_max_range" default=""/>      <!-- m; empty = max_range (5 m when max_range is 0) -->
+  <arg name="depth_min_range"   default="0.2"/>
+  <arg name="lidar_min_range"   default="0.5"/>
+  <arg name="wavemap_threads"   default="2"/>     <!-- the LPC also runs locomotion -->
+  <arg name="depth_time_offset" default="0.0"/>
+  <arg name="lidar_time_offset" default="0.05"/>  <!-- lidar stamp = scan start; mid scan -->
+  <arg name="publish_map_period"    default="0.05"/> <!-- s between incremental /wavemap/map messages -->
+  <arg name="obstacle_cloud_period" default="1.0"/>  <!-- s, /wavemap/obstacle_pointcloud for RViz -->
+  <arg name="input_retry_period"    default="0.02"/> <!-- s, how often queued clouds are integrated -->
+
+  <!-- bridge -->
+  <arg name="bridge"            default="true"/>
+  <arg name="bridge_topic"      default="/dynasense/wavemap_voxels"/>
+  <arg name="base_frame"        default="base"/>
+  <arg name="bridge_rate"       default="20.0"/>  <!-- Hz -->
+  <arg name="bridge_radius"     default="1.0"/>   <!-- m, horizontal -->
+  <arg name="floor_z"           default=""/>      <!-- m in world_frame; empty: 0 with sim:=true, else from floor_z_topic -->
+  <arg name="floor_z_topic"     default="/dynasense/floor_z"/> <!-- std_msgs/Float64, latched -->
+  <arg name="bridge_z_min_above_floor" default="0.05"/> <!-- m, as the BPS min_height_above_ground -->
+  <arg name="bridge_z_max_above_floor" default="1.8"/>  <!-- m, as the BPS max_height_above_ground -->
+  <arg name="bridge_z_min"      default=""/>      <!-- m absolute; overrides the floor-relative band when both are set -->
+  <arg name="bridge_z_max"      default=""/>
+  <arg name="bridge_occupancy_threshold" default="0.0"/> <!-- log-odds -->
+  <arg name="bridge_max_voxels" default="2000"/>  <!-- = bps.yaml ray_buffer_capacity -->
+  <arg name="bridge_map_timeout" default="1.0"/>  <!-- s without a map message before warning -->
+
+  <!-- process -->
+  <arg name="stats_period"      default="10.0"/>  <!-- s between statistics lines -->
+  <arg name="launch_prefix"     default="nice -n 10"/>
+  <arg name="rviz"              default="false"/>
+  <arg name="rviz_config"       default="$(find anymal_d_rsl)/config/ui/config_wavemap.rviz"/>
+
+  <!-- derived, as in replay_wavemap.launch ($(eval) has no max/min; each eval is a whole attribute) -->
+  <arg name="wavemap_max_range_eff" value="$(eval float(arg('wavemap_max_range')) if str(arg('wavemap_max_range')) != '' else (float(arg('max_range')) if float(arg('max_range')) > 0 else 5.0))"/>
+  <arg name="depth_sigma_cell"  value="$(eval float(arg('min_cell_width')) / 2 if float(arg('min_cell_width')) / 2 > 0.01 else 0.01)"/>
+  <arg name="depth_sigma_cap"   value="$(eval float(arg('depth_min_range')) / 6 - 0.005)"/>
+  <arg name="depth_range_sigma" value="$(eval float(arg('depth_sigma_cell')) if float(arg('depth_sigma_cap')) > float(arg('depth_sigma_cell')) else float(arg('depth_sigma_cap')))"/>
+  <arg name="lidar_sigma_cell"  value="$(eval float(arg('min_cell_width')) / 2 if float(arg('min_cell_width')) / 2 > 0.03 else 0.03)"/>
+  <arg name="lidar_sigma_cap"   value="$(eval float(arg('lidar_min_range')) / 6 - 0.005)"/>
+  <arg name="lidar_range_sigma" value="$(eval float(arg('lidar_sigma_cell')) if float(arg('lidar_sigma_cap')) > float(arg('lidar_sigma_cell')) else float(arg('lidar_sigma_cap')))"/>
+  <arg name="enabled_inputs"    value="$(eval str(arg('depth_cameras')) + (' lidar' if arg('use_lidar') else ''))"/>
+  <arg name="floor_z_eff"       value="$(eval str(arg('floor_z')) if str(arg('floor_z')) != '' else ('0.0' if arg('sim') else ''))"/>
+  <arg name="absolute_band"     value="$(eval str(arg('bridge_z_min')) != '' and str(arg('bridge_z_max')) != '')"/>
+
+  <node pkg="dynasense" type="dynasense_depth_image_to_pointcloud_node" name="dynasense_depth_to_cloud"
+        output="screen" launch-prefix="$(arg launch_prefix)">
+    <rosparam command="load" file="$(arg depth_config)"/>
+    <rosparam command="load" file="$(arg depth_live_config)"/>
+    <param name="decimation"          type="int"    value="$(arg decimation)"/>
+    <param name="max_rate"            type="double" value="$(arg depth_rate)"/>
+    <param name="publish_camera_info" type="bool"   value="false"/>
+  </node>
+
+  <node pkg="dynasense" type="dynasense_self_filter_node" name="self_filter" output="screen"
+        launch-prefix="$(arg launch_prefix)">
+    <rosparam command="load" file="$(arg filter_config)"/>
+    <param name="body_margin"    type="double" value="$(arg body_margin)"/>
+    <param name="max_range"      type="double" value="$(arg max_range)"/>
+    <param name="enabled_inputs" type="str"    value="$(arg enabled_inputs)"/>
+    <param name="output_topic_suffix" type="str" value="$(arg filtered_suffix)"/>
+    <param name="stats_period"   type="double" value="$(arg stats_period)"/>
+  </node>
+
+  <node pkg="wavemap_ros" type="ros_server" name="wavemap" output="screen" launch-prefix="$(arg launch_prefix)">
+    <rosparam file="$(arg wavemap_config)" subst_value="true"/>
+  </node>
+
+  <node pkg="dynasense" type="dynasense_wavemap_bps_bridge" name="wavemap_bps_bridge" output="screen"
+        if="$(arg bridge)" launch-prefix="$(arg launch_prefix)">
+    <param name="map_topic"           type="str"    value="/wavemap/map"/>
+    <param name="output_topic"        type="str"    value="$(arg bridge_topic)"/>
+    <param name="base_frame"          type="str"    value="$(arg base_frame)"/>
+    <param name="rate"                type="double" value="$(arg bridge_rate)"/>
+    <param name="radius"              type="double" value="$(arg bridge_radius)"/>
+    <param name="z_min_above_floor"   type="double" value="$(arg bridge_z_min_above_floor)"/>
+    <param name="z_max_above_floor"   type="double" value="$(arg bridge_z_max_above_floor)"/>
+    <param name="z_min"               type="double" value="$(arg bridge_z_min)" if="$(arg absolute_band)"/>
+    <param name="z_max"               type="double" value="$(arg bridge_z_max)" if="$(arg absolute_band)"/>
+    <param name="floor_z"             type="double" value="$(arg floor_z_eff)"
+           if="$(eval str(arg('floor_z_eff')) != '')"/>
+    <param name="floor_z_topic"       type="str"    value="$(arg floor_z_topic)"
+           if="$(eval str(arg('floor_z_eff')) == '')"/>
+    <param name="occupancy_threshold" type="double" value="$(arg bridge_occupancy_threshold)"/>
+    <param name="max_voxels"          type="int"    value="$(arg bridge_max_voxels)"/>
+    <param name="map_timeout"         type="double" value="$(arg bridge_map_timeout)"/>
+    <param name="stats_period"        type="double" value="$(arg stats_period)"/>
+  </node>
+
+  <node pkg="rviz" type="rviz" name="wavemap_rviz" if="$(arg rviz)"
+        args="-d $(arg rviz_config) -f $(arg world_frame)"/>
+</launch>

@@ -1,0 +1,10 @@
+# Real-robot overlay for config/depth_cameras.yaml (launch/live_wavemap.launch
+# loads it after that file). Lists are replaced on load, so `cameras` below is
+# exactly the set the converter subscribes to: the four face cameras.
+publish_camera_info: false   # the RealSense driver owns {ns}/depth/camera_info
+use_live_camera_info: true   # back-project with the driver's factory intrinsics
+cameras:
+  - {name: front_upper, namespace: /depth_camera_front_upper}
+  - {name: front_lower, namespace: /depth_camera_front_lower}
+  - {name: rear_upper,  namespace: /depth_camera_rear_upper}
+  - {name: rear_lower,  namespace: /depth_camera_rear_lower}

@@ -1,0 +1,14 @@
+# Gazebo overlay for config/depth_cameras.yaml (launch/live_wavemap.launch sim:=true
+# loads it after that file). The simulated D435s (libgazebo_ros_openni_kinect) publish
+# 32FC1 depth on {ns}/aligned_depth_to_color/image_raw with its camera_info next to it;
+# the stack's own {ns}/depth/... relays are not needed. Lists are replaced on load, so
+# `cameras` is exactly the four face cameras.
+image_topic_template:       "{ns}/aligned_depth_to_color/image_raw"
+camera_info_topic_template: "{ns}/aligned_depth_to_color/camera_info"
+publish_camera_info: false
+use_live_camera_info: true
+cameras:
+  - {name: front_upper, namespace: /depth_camera_front_upper}
+  - {name: front_lower, namespace: /depth_camera_front_lower}
+  - {name: rear_upper,  namespace: /depth_camera_rear_upper}
+  - {name: rear_lower,  namespace: /depth_camera_rear_lower}

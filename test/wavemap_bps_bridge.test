@@ -1,0 +1,31 @@
+<launch>
+  <!-- dynasense_wavemap_bps_bridge against a hand-built wavemap map message. -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="odom_to_base"
+        args="0.2 1.6 0.5 0 0 0 odom base"/>
+  <node pkg="dynasense" type="dynasense_wavemap_bps_bridge" name="bridge_test_bridge" output="screen">
+    <param name="map_topic" value="/bridge_test/map"/>
+    <param name="output_topic" value="/bridge_test/voxels"/>
+    <param name="base_frame" value="base"/>
+    <param name="rate" value="20.0"/>
+    <param name="radius" value="0.5"/>
+    <param name="z_min" value="0.05"/>
+    <param name="z_max" value="0.3"/>
+    <param name="max_voxels" value="0"/>
+    <param name="map_timeout" value="10.0"/>
+    <param name="stats_period" value="0.0"/>
+  </node>
+  <node pkg="dynasense" type="dynasense_wavemap_bps_bridge" name="bridge_test_floor" output="screen">
+    <param name="map_topic" value="/bridge_test/map"/>
+    <param name="output_topic" value="/bridge_test/voxels_floor"/>
+    <param name="base_frame" value="base"/>
+    <param name="rate" value="20.0"/>
+    <param name="radius" value="0.5"/>
+    <param name="floor_z_topic" value="/bridge_test/floor_z"/>
+    <param name="z_min_above_floor" value="0.05"/>
+    <param name="z_max_above_floor" value="0.3"/>
+    <param name="max_voxels" value="0"/>
+    <param name="map_timeout" value="10.0"/>
+    <param name="stats_period" value="0.0"/>
+  </node>
+  <test test-name="wavemap_bps_bridge" pkg="dynasense" type="test_wavemap_bps_bridge.py" time-limit="60"/>
+</launch>

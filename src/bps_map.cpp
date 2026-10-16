@@ -113,6 +113,27 @@ bool BpsMap::addRayPoint(const Eigen::Vector3d& pointWorld) {
   return true;
 }
 
+RayReplaceResult BpsMap::replaceRayVoxels(const std::vector<Eigen::Vector3d>& pointsWorld, bool applyGates) {
+  RayReplaceResult result;
+  rayBuffer_.clear();
+  for (std::size_t i = 0; i < pointsWorld.size(); ++i) {
+    // Stop at capacity instead of relying on insert()'s eviction, which would
+    // throw out the least recently inserted voxel, i.e. the NEAREST one.
+    if (rayBuffer_.size() >= rayBuffer_.capacity()) {
+      result.truncated = pointsWorld.size() - i;
+      break;
+    }
+    const Eigen::Vector3d& p = pointsWorld[i];
+    if (applyGates ? !accept(p) : !p.allFinite()) {
+      ++result.rejected;
+      continue;
+    }
+    rayBuffer_.insert(worldToVoxel(p));
+    ++result.accepted;
+  }
+  return result;
+}
+
 void BpsMap::clear() {
   contactBuffer_.clear();
   rayBuffer_.clear();
