@@ -16,6 +16,7 @@
 
   Usage:
     roslaunch dynasense sim_contact_bps.launch
+    roslaunch dynasense sim_contact_bps.launch policy:=lsio_sgs       # LSIO + SGS actor
     roslaunch dynasense sim_contact_bps.launch ground_z:=-1.0
     roslaunch dynasense sim_contact_bps.launch lidar_self_filter:=false   # raw lidar into the BPS node
 -->
@@ -23,6 +24,13 @@
 
   <!-- RSL feature-toggle config consumed by anymal_d_rsl/bin/sim.py -->
   <arg name="cfg"             default="rsl.yaml"/>
+
+  <!-- Which actor rl_controller runs: anchor | lsio_sgs. Empty = whatever
+       policy.variant in rl_controller's config.yaml says. The param is written
+       on every launch, also when empty, so a value left on a long-running
+       roscore by an earlier run cannot silently carry over. -->
+  <arg name="policy"          default=""/>
+  <param name="/rl_controller/policy_variant" type="str" value="$(arg policy)"/>
 
   <!-- BPS node parameters -->
   <arg name="bps_config"      default="$(find dynasense)/config/bps.yaml"/>

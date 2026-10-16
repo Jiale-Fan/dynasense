@@ -129,8 +129,8 @@ depth_cloud_topics:
   - /depth_camera_front_lower/point_cloud_self_filtered
   - /depth_camera_rear_upper/point_cloud_self_filtered
   - /depth_camera_rear_lower/point_cloud_self_filtered
-  - /depth_camera_left/point_cloud_self_filtered
-  - /depth_camera_right/point_cloud_self_filtered
+  # - /depth_camera_left/point_cloud_self_filtered
+  # - /depth_camera_right/point_cloud_self_filtered
 
 camera_pattern_cols: 24
 camera_pattern_rows: 16
@@ -138,7 +138,9 @@ camera_hfov_deg: 86.62
 camera_vfov_deg: 59.73
 camera_optical_frame: true
 
+###################
 ray_max_range: 1.0
+###################
 
 use_lidar: true
 lidar_topic: /lidar/point_cloud_self_filtered   # from sim_contact_bps.launch's lidar_self_filter; raw: /lidar/point_cloud
